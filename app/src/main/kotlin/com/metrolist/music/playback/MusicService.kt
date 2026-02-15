@@ -2835,19 +2835,32 @@ class MusicService :
             // Check if we need to bypass cache for quality change
             val shouldBypassCache = bypassCacheForQualityChange.contains(mediaId)
 
+            // ZEMER APPROACH: Check for downloaded file URI first (local playback)
+            // Only use local file if starting from beginning (position 0) to avoid
+            // switching sources mid-stream when a download completes during playback
             if (!shouldBypassCache) {
-                if (downloadCache.isCached(
-                        mediaId,
-                        dataSpec.position,
-                        if (dataSpec.length >= 0) dataSpec.length else 1
-                    ) ||
-                    playerCache.isCached(mediaId, dataSpec.position, CHUNK_LENGTH)
-                ) {
+                val song = runBlocking(Dispatchers.IO) {
+                    database.song(mediaId).first()
+                }
+
+                // Use downloaded file directly if available (bypasses ExoPlayer cache entirely)
+                if (song?.song?.downloadUri != null && dataSpec.position == 0L) {
+                    Timber.tag("CacheResolver").d("Using downloaded file for $mediaId: ${song.song.downloadUri}")
+                    scope.launch(Dispatchers.IO) { recoverSong(mediaId) }
+                    return@Factory dataSpec.withUri(song.song.downloadUri.toUri())
+                }
+
+                // Check player cache (streaming buffer) - NOT download cache
+                // Download cache can have format mismatches, use downloadUri instead
+                if (playerCache.isCached(mediaId, dataSpec.position, CHUNK_LENGTH)) {
+                    Timber.tag("CacheResolver").d("Using player cache for $mediaId at pos=${dataSpec.position}")
                     scope.launch(Dispatchers.IO) { recoverSong(mediaId) }
                     return@Factory dataSpec
                 }
 
+                // Check URL cache
                 songUrlCache[mediaId]?.takeIf { it.second > System.currentTimeMillis() }?.let {
+                    Timber.tag("CacheResolver").d("Using URL cache for $mediaId")
                     scope.launch(Dispatchers.IO) { recoverSong(mediaId) }
                     return@Factory dataSpec.withUri(it.first.toUri())
                 }
@@ -2940,7 +2953,9 @@ class MusicService :
         DefaultMediaSourceFactory(
             createDataSourceFactory(),
             ExtractorsFactory {
-                arrayOf(MatroskaExtractor(), FragmentedMp4Extractor())
+                // FragmentedMp4Extractor first for M4A downloads, MatroskaExtractor for WebM/OPUS streams
+                // Order matters: ExoPlayer tries extractors in order until sniff() succeeds
+                arrayOf(FragmentedMp4Extractor(), MatroskaExtractor())
             },
         )
 

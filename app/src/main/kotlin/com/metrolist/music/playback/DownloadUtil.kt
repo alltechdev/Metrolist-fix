@@ -129,17 +129,40 @@ constructor(
             val mediaId = dataSpec.key ?: error("No media id")
             val length = if (dataSpec.length >= 0) dataSpec.length else 1
 
-            if (playerCache.isCached(mediaId, dataSpec.position, length)) {
-                return@Factory dataSpec
-            }
-
-            songUrlCache[mediaId]?.takeIf { it.second < System.currentTimeMillis() }?.let {
-                return@Factory dataSpec.withUri(it.first.toUri())
-            }
-
             // Check if user selected a specific format for this download
+            // IMPORTANT: Check targetItag FIRST - if set, we must bypass cache to get that specific format
             val targetItag = targetItagOverride[mediaId] ?: 0
-            timber.log.Timber.tag("DownloadUtil").d("Fetching stream for $mediaId, targetItag=${if (targetItag > 0) targetItag else "auto"}")
+            val hasTargetItag = targetItag > 0
+            timber.log.Timber.tag("DownloadUtil").d("Download resolver for $mediaId, targetItag=${if (hasTargetItag) targetItag else "auto"}")
+
+            // Only use cache if no specific format was requested
+            if (!hasTargetItag) {
+                if (playerCache.isCached(mediaId, dataSpec.position, length)) {
+                    timber.log.Timber.tag("DownloadUtil").d("Using player cache for $mediaId")
+                    return@Factory dataSpec
+                }
+
+                // Fixed: use > for "not expired" (was < which meant "use if expired")
+                songUrlCache[mediaId]?.takeIf { it.second > System.currentTimeMillis() }?.let {
+                    timber.log.Timber.tag("DownloadUtil").d("Using URL cache for $mediaId")
+                    return@Factory dataSpec.withUri(it.first.toUri())
+                }
+            } else {
+                // Clear caches when specific format requested to ensure fresh fetch
+                timber.log.Timber.tag("DownloadUtil").d("Bypassing cache for $mediaId - specific format requested (itag=$targetItag)")
+                songUrlCache.remove(mediaId)
+                // Also clear playerCache for this media to prevent format mismatch
+                runBlocking(Dispatchers.IO) {
+                    try {
+                        if (playerCache.getCachedSpans(mediaId).isNotEmpty()) {
+                            playerCache.removeResource(mediaId)
+                            timber.log.Timber.tag("DownloadUtil").d("Cleared player cache for $mediaId")
+                        }
+                    } catch (_: Exception) {}
+                }
+            }
+
+            timber.log.Timber.tag("DownloadUtil").d("Fetching fresh stream for $mediaId, targetItag=${if (hasTargetItag) targetItag else "auto"}")
 
             val playbackData = runBlocking(Dispatchers.IO) {
                 YTPlayerUtils.playerResponseForPlayback(
@@ -150,6 +173,9 @@ constructor(
                 )
             }.getOrThrow()
             val format = playbackData.format
+            timber.log.Timber.tag("DownloadUtil").i(
+                "Download stream for $mediaId: itag=${format.itag}, mimeType=${format.mimeType.split(";")[0]}, bitrate=${format.bitrate/1000}kbps"
+            )
 
             database.query {
                 upsert(
