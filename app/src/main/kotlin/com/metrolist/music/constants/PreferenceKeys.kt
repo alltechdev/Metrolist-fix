@@ -117,6 +117,10 @@ val CrossfadeGaplessKey = booleanPreferencesKey("crossfadeGapless")
 val MaxImageCacheSizeKey = intPreferencesKey("maxImageCacheSize")
 val MaxSongCacheSizeKey = intPreferencesKey("maxSongCacheSize")
 
+// Custom download path
+val CustomDownloadPathEnabledKey = booleanPreferencesKey("customDownloadPathEnabled")
+val CustomDownloadPathUriKey = stringPreferencesKey("customDownloadPathUri")
+
 val PauseListenHistoryKey = booleanPreferencesKey("pauseListenHistory")
 val PauseSearchHistoryKey = booleanPreferencesKey("pauseSearchHistory")
 val DisableScreenshotKey = booleanPreferencesKey("disableScreenshot")

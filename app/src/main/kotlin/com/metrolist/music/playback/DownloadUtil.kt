@@ -20,13 +20,18 @@ import androidx.media3.exoplayer.offline.DownloadNotificationHelper
 import com.metrolist.innertube.YouTube
 import com.metrolist.music.constants.AudioQuality
 import com.metrolist.music.constants.AudioQualityKey
+import com.metrolist.music.constants.CustomDownloadPathEnabledKey
+import com.metrolist.music.constants.CustomDownloadPathUriKey
 import com.metrolist.music.db.MusicDatabase
 import com.metrolist.music.db.entities.FormatEntity
 import com.metrolist.music.db.entities.SongEntity
 import com.metrolist.music.di.DownloadCache
 import com.metrolist.music.di.PlayerCache
+import com.metrolist.music.utils.DownloadExportHelper
 import com.metrolist.music.utils.YTPlayerUtils
+import com.metrolist.music.utils.booleanPreference
 import com.metrolist.music.utils.enumPreference
+import com.metrolist.music.utils.stringPreference
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.DelicateCoroutinesApi
@@ -50,17 +55,54 @@ import javax.inject.Singleton
 class DownloadUtil
 @Inject
 constructor(
-    @ApplicationContext context: Context,
+    @ApplicationContext private val context: Context,
     val database: MusicDatabase,
     val databaseProvider: DatabaseProvider,
     @DownloadCache val downloadCache: SimpleCache,
     @PlayerCache val playerCache: SimpleCache,
+    private val downloadExportHelper: DownloadExportHelper,
 ) {
     private val connectivityManager = context.getSystemService<ConnectivityManager>()!!
     private val audioQuality by enumPreference(context, AudioQualityKey, AudioQuality.AUTO)
+    private val customDownloadPathEnabled by booleanPreference(context, CustomDownloadPathEnabledKey, false)
+    private val customDownloadPathUri by stringPreference(context, CustomDownloadPathUriKey, "")
     private val songUrlCache = HashMap<String, Pair<String, Long>>()
 
+    // Map of songId -> itag for user-selected format downloads
+    private val targetItagOverride = mutableMapOf<String, Int>()
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * Set the target itag for a specific song download.
+     * This will be used instead of auto-selection when downloading.
+     */
+    fun setTargetItag(songId: String, itag: Int) {
+        timber.log.Timber.tag("DownloadUtil").d("Setting target itag for $songId: $itag")
+        targetItagOverride[songId] = itag
+        // Invalidate cached URL to force fresh fetch with new format
+        invalidateUrl(songId)
+    }
+
+    /**
+     * Clear the target itag for a song (revert to auto-selection).
+     */
+    fun clearTargetItag(songId: String) {
+        timber.log.Timber.tag("DownloadUtil").d("Clearing target itag for $songId")
+        targetItagOverride.remove(songId)
+    }
+
+    /**
+     * Invalidate cached URL for a specific song.
+     * Call this when the stream URL needs to be refreshed (e.g., format change).
+     */
+    fun invalidateUrl(songId: String) {
+        val hadEntry = songUrlCache.containsKey(songId)
+        songUrlCache.remove(songId)
+        if (hadEntry) {
+            timber.log.Timber.tag("DownloadUtil").d("Invalidated cached URL for: $songId")
+        }
+    }
 
     val downloads = MutableStateFlow<Map<String, Download>>(emptyMap())
 
@@ -95,11 +137,16 @@ constructor(
                 return@Factory dataSpec.withUri(it.first.toUri())
             }
 
+            // Check if user selected a specific format for this download
+            val targetItag = targetItagOverride[mediaId] ?: 0
+            timber.log.Timber.tag("DownloadUtil").d("Fetching stream for $mediaId, targetItag=${if (targetItag > 0) targetItag else "auto"}")
+
             val playbackData = runBlocking(Dispatchers.IO) {
                 YTPlayerUtils.playerResponseForPlayback(
                     mediaId,
                     audioQuality = audioQuality,
                     connectivityManager = connectivityManager,
+                    targetItag = targetItag,
                 )
             }.getOrThrow()
             val format = playbackData.format
@@ -178,16 +225,74 @@ constructor(
                         }
 
                         scope.launch {
+                            val songId = download.request.id
+                            timber.log.Timber.tag("DownloadUtil").d("onDownloadChanged: songId=$songId, state=${download.state}")
+
                             when (download.state) {
                                 Download.STATE_COMPLETED -> {
-                                    database.updateDownloadedInfo(download.request.id, true, LocalDateTime.now())
+                                    timber.log.Timber.tag("DownloadUtil").d("Download completed for: $songId")
+                                    // Clear target itag override now that download is done
+                                    clearTargetItag(songId)
+                                    database.updateDownloadedInfo(songId, true, LocalDateTime.now())
+
+                                    // Export to custom path if enabled
+                                    timber.log.Timber.tag("DownloadUtil").d(
+                                        "Custom path enabled: $customDownloadPathEnabled, URI: ${customDownloadPathUri.take(50)}..."
+                                    )
+                                    if (customDownloadPathEnabled && customDownloadPathUri.isNotEmpty()) {
+                                        timber.log.Timber.tag("DownloadUtil").d("Starting export to custom path for: $songId")
+                                        try {
+                                            val result = downloadExportHelper.exportToCustomPath(
+                                                songId,
+                                                customDownloadPathUri
+                                            )
+                                            if (result != null) {
+                                                timber.log.Timber.tag("DownloadUtil")
+                                                    .d("Export successful for $songId: $result")
+                                            } else {
+                                                timber.log.Timber.tag("DownloadUtil")
+                                                    .w("Export returned null for: $songId")
+                                            }
+                                        } catch (e: Exception) {
+                                            // Log error but don't fail - internal cache still works
+                                            timber.log.Timber.tag("DownloadUtil")
+                                                .e(e, "Failed to export to custom path for: $songId")
+                                        }
+                                    } else {
+                                        timber.log.Timber.tag("DownloadUtil")
+                                            .d("Custom path export skipped - not enabled or URI empty")
+                                    }
                                 }
-                                Download.STATE_FAILED,
-                                Download.STATE_STOPPED,
+                                Download.STATE_FAILED -> {
+                                    timber.log.Timber.tag("DownloadUtil").w("Download failed for: $songId")
+                                    clearTargetItag(songId)
+                                    database.updateDownloadedInfo(songId, false, null)
+                                }
+                                Download.STATE_STOPPED -> {
+                                    timber.log.Timber.tag("DownloadUtil").d("Download stopped for: $songId")
+                                    clearTargetItag(songId)
+                                    database.updateDownloadedInfo(songId, false, null)
+                                }
                                 Download.STATE_REMOVING -> {
-                                    database.updateDownloadedInfo(download.request.id, false, null)
+                                    timber.log.Timber.tag("DownloadUtil").d("Download removing for: $songId")
+                                    clearTargetItag(songId)
+                                    database.updateDownloadedInfo(songId, false, null)
+
+                                    // Also clean up external file if exists
+                                    timber.log.Timber.tag("DownloadUtil")
+                                        .d("Attempting to delete external file for: $songId")
+                                    try {
+                                        val deleted = downloadExportHelper.deleteFromCustomPath(songId)
+                                        timber.log.Timber.tag("DownloadUtil")
+                                            .d("External file deletion result: $deleted for: $songId")
+                                    } catch (e: Exception) {
+                                        timber.log.Timber.tag("DownloadUtil")
+                                            .e(e, "Failed to delete from custom path for: $songId")
+                                    }
                                 }
                                 else -> {
+                                    timber.log.Timber.tag("DownloadUtil")
+                                        .d("Unhandled download state ${download.state} for: $songId")
                                 }
                             }
                         }

@@ -129,13 +129,47 @@ fun PlayerMenu(
     val librarySong by database.song(mediaMetadata.id).collectAsState(initial = null)
     val coroutineScope = rememberCoroutineScope()
 
-    val download by LocalDownloadUtil.current.getDownload(mediaMetadata.id)
+    val downloadUtil = LocalDownloadUtil.current
+    val download by downloadUtil.getDownload(mediaMetadata.id)
         .collectAsState(initial = null)
 
     val artists =
         remember(mediaMetadata.artists) {
             mediaMetadata.artists.filter { it.id != null }
         }
+
+    // Download format picker state
+    var showDownloadFormatDialog by rememberSaveable { mutableStateOf(false) }
+    var availableFormats by remember { mutableStateOf<List<com.metrolist.music.utils.YTPlayerUtils.AudioFormatOption>>(emptyList()) }
+    var isLoadingFormats by remember { mutableStateOf(false) }
+
+    if (showDownloadFormatDialog) {
+        com.metrolist.music.ui.component.DownloadFormatDialog(
+            isLoading = isLoadingFormats,
+            formats = availableFormats,
+            onFormatSelected = { format ->
+                timber.log.Timber.tag("PlayerMenu").d("Format selected: ${format.displayName} (itag=${format.itag})")
+                showDownloadFormatDialog = false // Close format picker, keep menu open
+                // Set target itag and start download
+                downloadUtil.setTargetItag(mediaMetadata.id, format.itag)
+                val downloadRequest =
+                    androidx.media3.exoplayer.offline.DownloadRequest
+                        .Builder(mediaMetadata.id, mediaMetadata.id.toUri())
+                        .setCustomCacheKey(mediaMetadata.id)
+                        .setData(mediaMetadata.title.toByteArray())
+                        .build()
+                androidx.media3.exoplayer.offline.DownloadService.sendAddDownload(
+                    context,
+                    ExoDownloadService::class.java,
+                    downloadRequest,
+                    false,
+                )
+            },
+            onDismiss = {
+                showDownloadFormatDialog = false
+            }
+        )
+    }
 
     var showChoosePlaylistDialog by rememberSaveable {
         mutableStateOf(false)
@@ -441,10 +475,10 @@ fun PlayerMenu(
 
         item {
             Material3MenuGroup(
-                items = listOf(
+                items = buildList {
                     when (download?.state) {
                         Download.STATE_COMPLETED -> {
-                            Material3MenuItemData(
+                            add(Material3MenuItemData(
                                 title = {
                                     Text(
                                         text = stringResource(R.string.remove_download)
@@ -458,6 +492,7 @@ fun PlayerMenu(
                                     )
                                 },
                                 onClick = {
+                                    timber.log.Timber.tag("PlayerMenu").d("Remove download clicked for: ${mediaMetadata.id}")
                                     DownloadService.sendRemoveDownload(
                                         context,
                                         ExoDownloadService::class.java,
@@ -465,11 +500,45 @@ fun PlayerMenu(
                                         false,
                                     )
                                 }
-                            )
+                            ))
+                            // Swap download option
+                            add(Material3MenuItemData(
+                                title = { Text(text = stringResource(R.string.swap_download)) },
+                                icon = {
+                                    Icon(
+                                        painter = painterResource(R.drawable.sync),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                },
+                                onClick = {
+                                    timber.log.Timber.tag("PlayerMenu").d("Swap download clicked for: ${mediaMetadata.id}")
+                                    showDownloadFormatDialog = true
+                                    isLoadingFormats = true
+                                    coroutineScope.launch(Dispatchers.IO) {
+                                        DownloadService.sendRemoveDownload(
+                                            context,
+                                            ExoDownloadService::class.java,
+                                            mediaMetadata.id,
+                                            false,
+                                        )
+                                        val result = com.metrolist.music.utils.YTPlayerUtils.getAllAvailableAudioFormats(mediaMetadata.id)
+                                        result.onSuccess { formats ->
+                                            timber.log.Timber.tag("PlayerMenu").d("Formats loaded: ${formats.size}")
+                                            availableFormats = formats
+                                            isLoadingFormats = false
+                                        }.onFailure { error ->
+                                            timber.log.Timber.tag("PlayerMenu").e(error, "Failed to load formats")
+                                            availableFormats = emptyList()
+                                            isLoadingFormats = false
+                                        }
+                                    }
+                                }
+                            ))
                         }
 
                         Download.STATE_QUEUED, Download.STATE_DOWNLOADING -> {
-                            Material3MenuItemData(
+                            add(Material3MenuItemData(
                                 title = { Text(text = stringResource(R.string.downloading)) },
                                 icon = {
                                     CircularProgressIndicator(
@@ -478,6 +547,7 @@ fun PlayerMenu(
                                     )
                                 },
                                 onClick = {
+                                    timber.log.Timber.tag("PlayerMenu").d("Cancel download clicked for: ${mediaMetadata.id}")
                                     DownloadService.sendRemoveDownload(
                                         context,
                                         ExoDownloadService::class.java,
@@ -485,11 +555,11 @@ fun PlayerMenu(
                                         false,
                                     )
                                 }
-                            )
+                            ))
                         }
 
                         else -> {
-                            Material3MenuItemData(
+                            add(Material3MenuItemData(
                                 title = { Text(text = stringResource(R.string.action_download)) },
                                 icon = {
                                     Icon(
@@ -499,26 +569,30 @@ fun PlayerMenu(
                                     )
                                 },
                                 onClick = {
-                                    database.transaction {
-                                        insert(mediaMetadata)
+                                    timber.log.Timber.tag("PlayerMenu").d("Download clicked for: ${mediaMetadata.id}")
+                                    showDownloadFormatDialog = true
+                                    isLoadingFormats = true
+                                    coroutineScope.launch(Dispatchers.IO) {
+                                        timber.log.Timber.tag("PlayerMenu").d("Fetching formats...")
+                                        database.transaction {
+                                            insert(mediaMetadata)
+                                        }
+                                        val result = com.metrolist.music.utils.YTPlayerUtils.getAllAvailableAudioFormats(mediaMetadata.id)
+                                        result.onSuccess { formats ->
+                                            timber.log.Timber.tag("PlayerMenu").d("Formats loaded: ${formats.size}")
+                                            availableFormats = formats
+                                            isLoadingFormats = false
+                                        }.onFailure { error ->
+                                            timber.log.Timber.tag("PlayerMenu").e(error, "Failed to load formats")
+                                            availableFormats = emptyList()
+                                            isLoadingFormats = false
+                                        }
                                     }
-                                    val downloadRequest =
-                                        DownloadRequest
-                                            .Builder(mediaMetadata.id, mediaMetadata.id.toUri())
-                                            .setCustomCacheKey(mediaMetadata.id)
-                                            .setData(mediaMetadata.title.toByteArray())
-                                            .build()
-                                    DownloadService.sendAddDownload(
-                                        context,
-                                        ExoDownloadService::class.java,
-                                        downloadRequest,
-                                        false,
-                                    )
                                 }
-                            )
+                            ))
                         }
                     }
-                )
+                }
             )
         }
 

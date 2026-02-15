@@ -79,6 +79,7 @@ object YTPlayerUtils {
         playlistId: String? = null,
         audioQuality: AudioQuality,
         connectivityManager: ConnectivityManager,
+        targetItag: Int = 0, // 0 = auto select, >0 = use specific itag
     ): Result<PlaybackData> = runCatching {
         Timber.tag(logTag).d("Fetching player response for videoId: $videoId, playlistId: $playlistId")
         // Debug: Log ALL playback attempts
@@ -229,6 +230,7 @@ object YTPlayerUtils {
                         responseToUse,
                         audioQuality,
                         connectivityManager,
+                        targetItag,
                     )
 
                 if (format == null) {
@@ -384,7 +386,19 @@ object YTPlayerUtils {
         playerResponse: PlayerResponse,
         audioQuality: AudioQuality,
         connectivityManager: ConnectivityManager,
+        targetItag: Int = 0, // 0 = auto, >0 = exact itag
     ): PlayerResponse.StreamingData.Format? {
+        // If exact itag requested, find it directly (for user-selected quality downloads)
+        if (targetItag > 0) {
+            val exactFormat = playerResponse.streamingData?.adaptiveFormats
+                ?.find { it.itag == targetItag }
+            if (exactFormat != null) {
+                Timber.tag(logTag).d("Using exact itag $targetItag: ${exactFormat.mimeType}, bitrate: ${exactFormat.bitrate}")
+                return exactFormat
+            }
+            Timber.tag(logTag).w("Requested itag $targetItag not found, falling back to auto selection")
+        }
+
         Timber.tag(logTag).d("Finding format with audioQuality: $audioQuality, network metered: ${connectivityManager.isActiveNetworkMetered}")
 
         val format = playerResponse.streamingData?.adaptiveFormats
@@ -529,5 +543,112 @@ object YTPlayerUtils {
 
     fun forceRefreshForVideo(videoId: String) {
         Timber.tag(logTag).d("Force refreshing for videoId: $videoId")
+    }
+
+    /**
+     * Data class representing an available audio format option for download.
+     */
+    data class AudioFormatOption(
+        val itag: Int,
+        val bitrate: Int,
+        val bitrateKbps: Int,
+        val mimeType: String,
+        val codec: String,
+    ) {
+        val displayName: String
+            get() = "${bitrateKbps}kbps ${codec.uppercase()}"
+
+        val isM4a: Boolean
+            get() = codec.equals("M4A", ignoreCase = true) || mimeType.contains("mp4a")
+
+        // Only higher quality M4A (128kbps+) reliably supports metadata embedding
+        // Lower bitrate M4A may have compatibility issues with Bento4
+        val supportsMetadata: Boolean
+            get() = isM4a && bitrateKbps >= 128
+    }
+
+    /**
+     * Fetches available audio formats from multiple clients for download selection.
+     * Returns all unique formats sorted by bitrate (highest first).
+     */
+    suspend fun getAllAvailableAudioFormats(
+        videoId: String
+    ): Result<List<AudioFormatOption>> = runCatching {
+        Timber.tag(TAG).d("=== Fetching ALL audio formats for $videoId ===")
+
+        val allClients = listOf(WEB_REMIX, TVHTML5, ANDROID_VR_1_43_32, IOS)
+        val allFormats = mutableListOf<AudioFormatOption>()
+        val seenItags = mutableSetOf<Int>()
+
+        // Get signature timestamp once
+        val signatureTimestamp = getSignatureTimestampOrNull(videoId)
+
+        // Check login status
+        val currentAuthCookie = YouTube.cookie
+        val isLoggedIn = currentAuthCookie != null && "SAPISID" in parseCookieString(currentAuthCookie)
+        val sessionId = if (isLoggedIn) YouTube.dataSyncId ?: YouTube.visitorData else YouTube.visitorData
+
+        // Generate PoToken once for web clients
+        val poTokenResult: PoTokenResult? = try {
+            if (sessionId != null) poTokenGenerator.getWebClientPoToken(videoId, sessionId) else null
+        } catch (e: Exception) {
+            Timber.tag(TAG).e(e, "PoToken generation failed")
+            null
+        }
+
+        for (client in allClients) {
+            try {
+                if (client.loginRequired && !isLoggedIn) {
+                    Timber.tag(TAG).d("Skipping ${client.clientName} - requires login")
+                    continue
+                }
+
+                val response = YouTube.player(
+                    videoId = videoId,
+                    client = client,
+                    signatureTimestamp = signatureTimestamp.timestamp,
+                    poToken = if (client.useWebPoTokens) poTokenResult?.playerRequestPoToken else null
+                ).getOrNull()
+
+                if (response?.playabilityStatus?.status != "OK") {
+                    Timber.tag(TAG).d("${client.clientName}: status=${response?.playabilityStatus?.status}")
+                    continue
+                }
+
+                val formats = response.streamingData?.adaptiveFormats
+                    ?.filter { it.isAudio && it.isOriginal }
+                    ?: continue
+
+                for (format in formats) {
+                    // Dedupe by itag (same format from different clients)
+                    if (seenItags.contains(format.itag)) continue
+                    seenItags.add(format.itag)
+
+                    val bitrateKbps = format.bitrate / 1000
+                    val codec = when {
+                        format.mimeType.contains("opus") -> "OPUS"
+                        format.mimeType.contains("mp4a") -> "M4A"
+                        else -> format.mimeType.substringAfter("audio/").substringBefore(";").uppercase()
+                    }
+                    allFormats.add(
+                        AudioFormatOption(
+                            itag = format.itag,
+                            bitrate = format.bitrate,
+                            bitrateKbps = bitrateKbps,
+                            mimeType = format.mimeType,
+                            codec = codec,
+                        )
+                    )
+                    Timber.tag(TAG).d("  ${client.clientName}: ${bitrateKbps}kbps $codec (itag=${format.itag})")
+                }
+            } catch (e: Exception) {
+                Timber.tag(TAG).e(e, "Failed to fetch from ${client.clientName}")
+            }
+        }
+
+        // Sort by bitrate (highest first), then by codec (M4A before OPUS for same bitrate)
+        val sorted = allFormats.sortedWith(compareByDescending<AudioFormatOption> { it.bitrate }.thenBy { it.codec })
+        Timber.tag(TAG).d("=== Total unique formats: ${sorted.size} ===")
+        sorted
     }
 }

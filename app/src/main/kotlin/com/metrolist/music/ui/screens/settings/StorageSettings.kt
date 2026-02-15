@@ -5,6 +5,10 @@
 
 package com.metrolist.music.ui.screens.settings
 
+import android.content.Intent
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -39,6 +43,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.documentfile.provider.DocumentFile
 import androidx.navigation.NavController
 import coil3.SingletonImageLoader
 import coil3.annotation.DelicateCoilApi
@@ -48,6 +53,8 @@ import com.metrolist.music.LocalDatabase
 import com.metrolist.music.LocalPlayerAwareWindowInsets
 import com.metrolist.music.LocalPlayerConnection
 import com.metrolist.music.R
+import com.metrolist.music.constants.CustomDownloadPathEnabledKey
+import com.metrolist.music.constants.CustomDownloadPathUriKey
 import com.metrolist.music.constants.MaxImageCacheSizeKey
 import com.metrolist.music.constants.MaxSongCacheSizeKey
 import com.metrolist.music.extensions.tryOrNull
@@ -64,8 +71,10 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import okio.ByteString.Companion.encodeUtf8
-import java.io.File
+import timber.log.Timber
 import kotlin.math.roundToInt
+
+private const val TAG = "StorageSettings"
 
 @OptIn(ExperimentalCoilApi::class, ExperimentalMaterial3Api::class, DelicateCoilApi::class)
 @Composable
@@ -90,6 +99,58 @@ fun StorageSettings(
         key = MaxSongCacheSizeKey,
         defaultValue = 1024
     )
+
+    // Custom download path preferences
+    val (customDownloadPathEnabled, onCustomDownloadPathEnabledChange) = rememberPreference(
+        key = CustomDownloadPathEnabledKey,
+        defaultValue = false
+    )
+    val (customDownloadPathUri, onCustomDownloadPathUriChange) = rememberPreference(
+        key = CustomDownloadPathUriKey,
+        defaultValue = ""
+    )
+
+    // Check if custom path permission is still valid
+    var customPathValid by remember { mutableStateOf(true) }
+    LaunchedEffect(customDownloadPathUri) {
+        if (customDownloadPathUri.isNotEmpty()) {
+            Timber.tag(TAG).d("Checking custom path validity: $customDownloadPathUri")
+            try {
+                val uri = Uri.parse(customDownloadPathUri)
+                val docFile = DocumentFile.fromTreeUri(context, uri)
+                customPathValid = docFile?.canWrite() == true
+                Timber.tag(TAG).d("Custom path valid: $customPathValid, canWrite: ${docFile?.canWrite()}")
+            } catch (e: Exception) {
+                Timber.tag(TAG).e(e, "Error checking custom path validity")
+                customPathValid = false
+            }
+        }
+    }
+
+    // Folder picker launcher
+    val folderPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri: Uri? ->
+        Timber.tag(TAG).d("Folder picker result: $uri")
+        uri?.let { selectedUri ->
+            Timber.tag(TAG).d("Taking persistable permission for: $selectedUri")
+            // Take persistable permission
+            val takeFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            try {
+                context.contentResolver.takePersistableUriPermission(selectedUri, takeFlags)
+                Timber.tag(TAG).d("Persistable permission granted successfully")
+            } catch (e: Exception) {
+                Timber.tag(TAG).e(e, "Failed to take persistable permission")
+            }
+
+            onCustomDownloadPathUriChange(selectedUri.toString())
+            customPathValid = true
+            Timber.tag(TAG).d("Custom download path set to: $selectedUri")
+        } ?: run {
+            Timber.tag(TAG).d("Folder picker cancelled by user")
+        }
+    }
 
     var clearDownloads by remember { mutableStateOf(false) }
     var clearCacheDialog by remember { mutableStateOf(false) }
@@ -306,6 +367,94 @@ fun StorageSettings(
                     }
                 )
             )
+        )
+
+        // Custom Download Path Settings
+        Material3SettingsGroup(
+            title = stringResource(R.string.custom_download_path),
+            items = buildList {
+                add(
+                    Material3SettingsItem(
+                        icon = painterResource(R.drawable.storage),
+                        title = { Text(stringResource(R.string.custom_download_path)) },
+                        description = { Text(stringResource(R.string.custom_download_path_desc)) },
+                        trailingContent = {
+                            androidx.compose.material3.Switch(
+                                checked = customDownloadPathEnabled,
+                                onCheckedChange = { enabled ->
+                                    Timber.tag(TAG).d("Custom download path toggle: $enabled")
+                                    if (enabled && customDownloadPathUri.isEmpty()) {
+                                        // Launch folder picker if enabling without a path set
+                                        Timber.tag(TAG).d("No path set, launching folder picker")
+                                        folderPickerLauncher.launch(null)
+                                    }
+                                    onCustomDownloadPathEnabledChange(enabled)
+                                }
+                            )
+                        }
+                    )
+                )
+                if (customDownloadPathEnabled) {
+                    add(
+                        Material3SettingsItem(
+                            icon = painterResource(R.drawable.download),
+                            title = { Text(stringResource(R.string.select_download_folder)) },
+                            description = {
+                                if (customDownloadPathUri.isNotEmpty()) {
+                                    val displayPath = try {
+                                        val uri = Uri.parse(customDownloadPathUri)
+                                        DocumentFile.fromTreeUri(context, uri)?.name ?: customDownloadPathUri
+                                    } catch (e: Exception) {
+                                        customDownloadPathUri
+                                    }
+                                    Column {
+                                        Text(
+                                            text = stringResource(R.string.current_path, displayPath),
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                        if (!customPathValid) {
+                                            Text(
+                                                text = stringResource(R.string.permission_lost_warning),
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.error
+                                            )
+                                        }
+                                    }
+                                } else {
+                                    Text(stringResource(R.string.no_folder_selected))
+                                }
+                            },
+                            onClick = {
+                                folderPickerLauncher.launch(null)
+                            }
+                        )
+                    )
+                    if (customDownloadPathUri.isNotEmpty()) {
+                        add(
+                            Material3SettingsItem(
+                                icon = painterResource(R.drawable.close),
+                                title = { Text(stringResource(R.string.reset_download_path)) },
+                                onClick = {
+                                    Timber.tag(TAG).d("Resetting custom download path")
+                                    // Release persistable permission
+                                    try {
+                                        val uri = Uri.parse(customDownloadPathUri)
+                                        val takeFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                                                Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                                        context.contentResolver.releasePersistableUriPermission(uri, takeFlags)
+                                        Timber.tag(TAG).d("Released persistable permission for: $uri")
+                                    } catch (e: Exception) {
+                                        Timber.tag(TAG).w(e, "Error releasing persistable permission (may already be released)")
+                                    }
+                                    onCustomDownloadPathUriChange("")
+                                    onCustomDownloadPathEnabledChange(false)
+                                    Timber.tag(TAG).d("Custom download path reset complete")
+                                }
+                            )
+                        )
+                    }
+                }
+            }
         )
 
         Material3SettingsGroup(

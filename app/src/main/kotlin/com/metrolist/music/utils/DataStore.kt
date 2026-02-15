@@ -52,6 +52,18 @@ inline fun <reified T : Enum<T>> enumPreference(
     defaultValue: T,
 ) = ReadOnlyProperty<Any?, T> { _, _ -> context.dataStore[key].toEnum(defaultValue) }
 
+fun booleanPreference(
+    context: Context,
+    key: Preferences.Key<Boolean>,
+    defaultValue: Boolean,
+) = ReadOnlyProperty<Any?, Boolean> { _, _ -> context.dataStore[key] ?: defaultValue }
+
+fun stringPreference(
+    context: Context,
+    key: Preferences.Key<String>,
+    defaultValue: String,
+) = ReadOnlyProperty<Any?, String> { _, _ -> context.dataStore[key] ?: defaultValue }
+
 @Composable
 fun <T> rememberPreference(
     key: Preferences.Key<T>,
