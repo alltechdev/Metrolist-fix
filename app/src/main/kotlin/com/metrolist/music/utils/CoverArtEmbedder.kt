@@ -39,6 +39,9 @@ class CoverArtEmbedder @Inject constructor(
      * @param artist Artist name, can be null
      * @param album Album name, can be null
      * @param year Year string, can be null
+     * @param albumArtist Album artist name, can be null
+     * @param trackNumber Track number (0 to skip)
+     * @param totalTracks Total tracks in album (0 if unknown)
      * @return true if successful, false otherwise
      */
     suspend fun embedMetadataIntoFile(
@@ -47,11 +50,15 @@ class CoverArtEmbedder @Inject constructor(
         title: String?,
         artist: String?,
         album: String?,
-        year: String?
+        year: String?,
+        albumArtist: String? = null,
+        trackNumber: Int = 0,
+        totalTracks: Int = 0
     ): Boolean = withContext(Dispatchers.IO) {
         Timber.tag(TAG).d("=== Starting metadata embedding ===")
         Timber.tag(TAG).d("File URI: $fileUri")
         Timber.tag(TAG).d("Title: $title, Artist: $artist, Album: $album, Year: $year")
+        Timber.tag(TAG).d("Album Artist: $albumArtist, Track: $trackNumber/$totalTracks")
         Timber.tag(TAG).d("Artwork size: ${artworkData?.size ?: 0} bytes")
 
         val tempDir = File(context.cacheDir, "coverart_temp")
@@ -90,7 +97,10 @@ class CoverArtEmbedder @Inject constructor(
                 title = title,
                 artist = artist,
                 album = album,
-                year = year
+                year = year,
+                albumArtist = albumArtist,
+                trackNumber = trackNumber,
+                totalTracks = totalTracks
             )
 
             if (!success) {
@@ -140,6 +150,9 @@ class CoverArtEmbedder @Inject constructor(
      * @param artist Artist name, can be null
      * @param album Album name, can be null
      * @param year Year string, can be null
+     * @param albumArtist Album artist name, can be null
+     * @param trackNumber Track number (0 to skip)
+     * @param totalTracks Total tracks in album (0 if unknown)
      * @return true if successful, false otherwise
      */
     suspend fun embedMetadataIntoLocalFile(
@@ -148,7 +161,10 @@ class CoverArtEmbedder @Inject constructor(
         title: String?,
         artist: String?,
         album: String?,
-        year: String?
+        year: String?,
+        albumArtist: String? = null,
+        trackNumber: Int = 0,
+        totalTracks: Int = 0
     ): Boolean = withContext(Dispatchers.IO) {
         Timber.tag(TAG).d("=== Starting local file metadata embedding ===")
         Timber.tag(TAG).d("File path: $filePath")
@@ -170,7 +186,10 @@ class CoverArtEmbedder @Inject constructor(
                 title = title,
                 artist = artist,
                 album = album,
-                year = year
+                year = year,
+                albumArtist = albumArtist,
+                trackNumber = trackNumber,
+                totalTracks = totalTracks
             )
 
             if (!success) {

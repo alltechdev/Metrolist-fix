@@ -16,7 +16,7 @@ object CoverArtNative {
     }
 
     /**
-     * Embed metadata (cover art, title, artist, album, year) into an M4A/MP4 file.
+     * Embed metadata (cover art, title, artist, album, year, album artist, track number) into an M4A/MP4 file.
      * All text is stored as UTF-8 (supports Hebrew, Arabic, and all Unicode).
      *
      * @param inputPath Path to the input M4A/MP4 file
@@ -26,6 +26,9 @@ object CoverArtNative {
      * @param artist Artist name (can be null)
      * @param album Album name (can be null)
      * @param year Year string (can be null)
+     * @param albumArtist Album artist name (can be null)
+     * @param trackNumber Track number (0 or negative to skip)
+     * @param totalTracks Total tracks in album (0 if unknown)
      * @return true if successful, false otherwise
      */
     external fun embedMetadata(
@@ -35,7 +38,10 @@ object CoverArtNative {
         title: String?,
         artist: String?,
         album: String?,
-        year: String?
+        year: String?,
+        albumArtist: String?,
+        trackNumber: Int,
+        totalTracks: Int
     ): Boolean
 
     /**

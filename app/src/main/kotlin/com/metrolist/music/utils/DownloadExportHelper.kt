@@ -64,9 +64,11 @@ class DownloadExportHelper @Inject constructor(
             Timber.tag(TAG).d("Format: ${format?.mimeType ?: "unknown"}, Extension: $extension")
 
             // Build folder structure: downloadFolder/Artist/Title.ext
-            val artistName = song.artists.firstOrNull()?.name ?: "Unknown Artist"
+            val firstArtist = song.artists.firstOrNull()?.name ?: "Unknown Artist"
+            val allArtists = song.artists.joinToString(", ") { it.name }
+                .ifEmpty { "Unknown Artist" }
             val title = song.song.title
-            val sanitizedArtistFolder = sanitizeFilename(artistName)
+            val sanitizedArtistFolder = sanitizeFilename(firstArtist)
             val sanitizedFilename = sanitizeFilename("$title.$extension")
             Timber.tag(TAG).d("Artist folder: $sanitizedArtistFolder, Filename: $sanitizedFilename")
 
@@ -155,17 +157,47 @@ class DownloadExportHelper @Inject constructor(
                 Timber.tag(TAG).d("M4A file detected (${bitrateKbps}kbps), embedding metadata...")
                 try {
                     val artworkData = fetchArtworkData(song.song.thumbnailUrl)
-                    val albumName = song.album?.title
-                    // Extract year from album if available
-                    val year = song.album?.year?.toString()
+
+                    // Try album relationship first, fall back to song entity fields
+                    var albumName = song.album?.title ?: song.song.albumName
+                    var year = (song.album?.year ?: song.song.year)?.toString()
+                    var albumArtist: String? = null
+                    var trackNumber = 0
+                    var totalTracks = 0
+
+                    // If missing album or year info and we have albumId, try fetching from YouTube
+                    if ((albumName == null || year == null) && song.song.albumId != null) {
+                        Timber.tag(TAG).d("Album/year info incomplete (album=$albumName, year=$year), fetching from YouTube...")
+                        try {
+                            val albumPage = com.metrolist.innertube.YouTube.album(song.song.albumId!!).getOrNull()
+                            if (albumPage != null) {
+                                if (albumName == null) albumName = albumPage.album.title
+                                if (year == null) year = albumPage.album.year?.toString()
+                                // Get album artist (first artist of album)
+                                albumArtist = albumPage.album.artists?.firstOrNull()?.name
+                                // Find track position in album
+                                totalTracks = albumPage.songs.size
+                                val trackIndex = albumPage.songs.indexOfFirst { it.id == songId }
+                                if (trackIndex >= 0) {
+                                    trackNumber = trackIndex + 1
+                                }
+                                Timber.tag(TAG).d("Fetched from YouTube - album: $albumName, year: $year, albumArtist: $albumArtist, track: $trackNumber/$totalTracks")
+                            }
+                        } catch (e: Exception) {
+                            Timber.tag(TAG).w(e, "Failed to fetch album info from YouTube")
+                        }
+                    }
 
                     val embedSuccess = coverArtEmbedder.embedMetadataIntoFile(
                         fileUri = newFile.uri,
                         artworkData = artworkData,
                         title = song.song.title,
-                        artist = artistName,
+                        artist = allArtists,
                         album = albumName,
-                        year = year
+                        year = year,
+                        albumArtist = albumArtist,
+                        trackNumber = trackNumber,
+                        totalTracks = totalTracks
                     )
 
                     if (embedSuccess) {
