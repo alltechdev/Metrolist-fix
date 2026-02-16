@@ -162,6 +162,12 @@
 -keep class com.metrolist.music.listentogether.proto.** { *; }
 -keepclassmembers class com.metrolist.music.listentogether.proto.** { *; }
 
+## CoverArt Native JNI
+-keep class com.metrolist.music.utils.CoverArtNative { *; }
+-keepclassmembers class com.metrolist.music.utils.CoverArtNative {
+    native <methods>;
+}
+
 ## Shazam Models
 -keep class com.metrolist.shazamkit.models.** { *; }
 -keepclassmembers class com.metrolist.shazamkit.models.** {

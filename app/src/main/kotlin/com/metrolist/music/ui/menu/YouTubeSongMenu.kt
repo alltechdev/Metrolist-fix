@@ -137,9 +137,46 @@ fun YouTubeSongMenu(
         onDismiss = { showChoosePlaylistDialog = false }
     )  
 
-    var showSelectArtistDialog by rememberSaveable {  
-        mutableStateOf(false)  
-    }  
+    var showSelectArtistDialog by rememberSaveable {
+        mutableStateOf(false)
+    }
+
+    // Download format picker state
+    var showDownloadFormatDialog by rememberSaveable { mutableStateOf(false) }
+    var availableFormats by remember { mutableStateOf<List<com.metrolist.music.utils.YTPlayerUtils.AudioFormatOption>>(emptyList()) }
+    var isLoadingFormats by remember { mutableStateOf(false) }
+    val downloadUtil = LocalDownloadUtil.current
+
+    if (showDownloadFormatDialog) {
+        com.metrolist.music.ui.component.DownloadFormatDialog(
+            isLoading = isLoadingFormats,
+            formats = availableFormats,
+            onFormatSelected = { format ->
+                Timber.tag("YouTubeSongMenu").d("Format selected: ${format.displayName} (itag=${format.itag})")
+                showDownloadFormatDialog = false
+                // Insert song to database first
+                database.transaction {
+                    insert(song.toMediaMetadata())
+                }
+                // Set target itag and start download
+                downloadUtil.setTargetItag(song.id, format.itag)
+                val downloadRequest = DownloadRequest
+                    .Builder(song.id, song.id.toUri())
+                    .setCustomCacheKey(song.id)
+                    .setData(song.title.toByteArray())
+                    .build()
+                DownloadService.sendAddDownload(
+                    context,
+                    ExoDownloadService::class.java,
+                    downloadRequest,
+                    false,
+                )
+            },
+            onDismiss = {
+                showDownloadFormatDialog = false
+            }
+        )
+    }
 
     if (showSelectArtistDialog) {  
         ListDialog(  
@@ -623,20 +660,21 @@ fun YouTubeSongMenu(
                                     )
                                 },
                                 onClick = {
-                                    database.transaction {
-                                        insert(song.toMediaMetadata())
+                                    // Show format picker dialog
+                                    showDownloadFormatDialog = true
+                                    isLoadingFormats = true
+                                    availableFormats = emptyList()
+
+                                    coroutineScope.launch(Dispatchers.IO) {
+                                        try {
+                                            val formats = com.metrolist.music.utils.YTPlayerUtils.getAllAvailableAudioFormats(song.id).getOrNull() ?: emptyList()
+                                            availableFormats = formats
+                                        } catch (e: Exception) {
+                                            Timber.tag("YouTubeSongMenu").e(e, "Failed to fetch formats")
+                                        } finally {
+                                            isLoadingFormats = false
+                                        }
                                     }
-                                    val downloadRequest = DownloadRequest
-                                        .Builder(song.id, song.id.toUri())
-                                        .setCustomCacheKey(song.id)
-                                        .setData(song.title.toByteArray())
-                                        .build()
-                                    DownloadService.sendAddDownload(
-                                        context,
-                                        ExoDownloadService::class.java,
-                                        downloadRequest,
-                                        false,
-                                    )
                                 }
                             )
                         }
