@@ -928,6 +928,10 @@
     <string name="loading_formats">Loading available qualities…</string>
     <string name="no_formats_available">No formats available</string>
     <string name="metadata_badge">+ Metadata</string>
+    <string name="best_badge">BEST</string>
+    <string name="quality_high">High</string>
+    <string name="quality_medium">Medium</string>
+    <string name="quality_low">Low</string>
     <string name="m4a_metadata_note">M4A 128kbps+ includes embedded cover art and metadata. Lower bitrate M4A and OPUS files will not have embedded metadata.</string>
     <string name="swap_download">Swap download</string>
     <string name="swap_download_desc">Re-download with different quality</string>
