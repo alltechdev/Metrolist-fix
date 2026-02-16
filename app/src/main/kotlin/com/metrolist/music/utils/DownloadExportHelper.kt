@@ -305,7 +305,7 @@ class DownloadExportHelper @Inject constructor(
     private fun getExtensionFromFormat(format: FormatEntity?): String {
         return when {
             format == null -> "m4a"
-            format.mimeType.contains("audio/webm") -> "webm"
+            format.mimeType.contains("audio/webm") -> "ogg"
             format.mimeType.contains("audio/mp4") -> "m4a"
             format.mimeType.contains("audio/mpeg") -> "mp3"
             format.mimeType.contains("audio/ogg") -> "ogg"
