@@ -89,6 +89,7 @@ import com.metrolist.music.ui.component.NewActionGrid
 import com.metrolist.music.ui.component.SongListItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import timber.log.Timber
 
 @SuppressLint("MutableCollectionMutableState")
 @Composable
@@ -165,6 +166,40 @@ fun AlbumMenu(
 
     val notAddedList by remember {
         mutableStateOf(mutableListOf<Song>())
+    }
+
+    // Download format picker state
+    var showDownloadFormatDialog by rememberSaveable { mutableStateOf(false) }
+    var availableFormats by remember { mutableStateOf<List<com.metrolist.music.utils.YTPlayerUtils.AudioFormatOption>>(emptyList()) }
+    var isLoadingFormats by remember { mutableStateOf(false) }
+
+    if (showDownloadFormatDialog) {
+        com.metrolist.music.ui.component.DownloadFormatDialog(
+            isLoading = isLoadingFormats,
+            formats = availableFormats,
+            onFormatSelected = { format ->
+                Timber.tag("AlbumMenu").d("Format selected for album: ${format.displayName} (itag=${format.itag})")
+                showDownloadFormatDialog = false
+                // Download all songs with selected format
+                songs.forEach { song ->
+                    downloadUtil.setTargetItag(song.id, format.itag)
+                    val downloadRequest = DownloadRequest
+                        .Builder(song.id, song.id.toUri())
+                        .setCustomCacheKey(song.id)
+                        .setData(song.song.title.toByteArray())
+                        .build()
+                    DownloadService.sendAddDownload(
+                        context,
+                        ExoDownloadService::class.java,
+                        downloadRequest,
+                        false,
+                    )
+                }
+            },
+            onDismiss = {
+                showDownloadFormatDialog = false
+            }
+        )
     }
 
     AddToPlaylistDialog(
@@ -466,10 +501,10 @@ fun AlbumMenu(
 
         item {
             Material3MenuGroup(
-                items = listOf(
+                items = buildList {
                     when (downloadState) {
                         STATE_COMPLETED -> {
-                            Material3MenuItemData(
+                            add(Material3MenuItemData(
                                 title = {
                                     Text(
                                         text = stringResource(R.string.remove_download)
@@ -491,10 +526,47 @@ fun AlbumMenu(
                                         )
                                     }
                                 }
-                            )
+                            ))
+                            // Swap download option
+                            add(Material3MenuItemData(
+                                title = { Text(text = stringResource(R.string.swap_download)) },
+                                description = { Text(text = stringResource(R.string.swap_download_desc)) },
+                                icon = {
+                                    Icon(
+                                        painter = painterResource(R.drawable.sync),
+                                        contentDescription = null
+                                    )
+                                },
+                                onClick = {
+                                    if (songs.isEmpty()) return@Material3MenuItemData
+                                    Timber.tag("AlbumMenu").d("Swap download clicked for album")
+                                    showDownloadFormatDialog = true
+                                    isLoadingFormats = true
+                                    coroutineScope.launch(Dispatchers.IO) {
+                                        // Remove all existing downloads first
+                                        songs.forEach { song ->
+                                            DownloadService.sendRemoveDownload(
+                                                context,
+                                                ExoDownloadService::class.java,
+                                                song.id,
+                                                false,
+                                            )
+                                        }
+                                        // Fetch formats from first song
+                                        val result = com.metrolist.music.utils.YTPlayerUtils.getAllAvailableAudioFormats(songs.first().id)
+                                        result.onSuccess { formats ->
+                                            availableFormats = formats
+                                            isLoadingFormats = false
+                                        }.onFailure {
+                                            availableFormats = emptyList()
+                                            isLoadingFormats = false
+                                        }
+                                    }
+                                }
+                            ))
                         }
                         STATE_QUEUED, STATE_DOWNLOADING -> {
-                            Material3MenuItemData(
+                            add(Material3MenuItemData(
                                 title = { Text(text = stringResource(R.string.downloading)) },
                                 icon = {
                                     CircularProgressIndicator(
@@ -512,10 +584,10 @@ fun AlbumMenu(
                                         )
                                     }
                                 }
-                            )
+                            ))
                         }
                         else -> {
-                            Material3MenuItemData(
+                            add(Material3MenuItemData(
                                 title = { Text(text = stringResource(R.string.action_download)) },
                                 description = { Text(text = stringResource(R.string.download_desc)) },
                                 icon = {
@@ -525,25 +597,27 @@ fun AlbumMenu(
                                     )
                                 },
                                 onClick = {
-                                    songs.forEach { song ->
-                                        val downloadRequest =
-                                            DownloadRequest
-                                                .Builder(song.id, song.id.toUri())
-                                                .setCustomCacheKey(song.id)
-                                                .setData(song.song.title.toByteArray())
-                                                .build()
-                                        DownloadService.sendAddDownload(
-                                            context,
-                                            ExoDownloadService::class.java,
-                                            downloadRequest,
-                                            false,
-                                        )
+                                    if (songs.isEmpty()) return@Material3MenuItemData
+                                    // Show format picker - fetch formats from first song
+                                    showDownloadFormatDialog = true
+                                    isLoadingFormats = true
+                                    availableFormats = emptyList()
+
+                                    coroutineScope.launch(Dispatchers.IO) {
+                                        try {
+                                            val formats = com.metrolist.music.utils.YTPlayerUtils.getAllAvailableAudioFormats(songs.first().id).getOrNull() ?: emptyList()
+                                            availableFormats = formats
+                                        } catch (e: Exception) {
+                                            Timber.tag("AlbumMenu").e(e, "Failed to fetch formats")
+                                        } finally {
+                                            isLoadingFormats = false
+                                        }
                                     }
                                 }
-                            )
+                            ))
                         }
                     }
-                )
+                }
             )
         }
 
