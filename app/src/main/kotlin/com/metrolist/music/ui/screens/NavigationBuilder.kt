@@ -59,6 +59,7 @@ import com.metrolist.music.ui.screens.settings.integrations.LastFMSettings
 import com.metrolist.music.ui.screens.settings.integrations.ListenTogetherSettings
 import com.metrolist.music.ui.screens.recognition.RecognitionScreen
 import com.metrolist.music.ui.screens.recognition.RecognitionHistoryScreen
+import com.metrolist.music.ui.screens.player.VideoPlayerScreen
 import com.metrolist.music.ui.screens.wrapped.WrappedScreen
 import com.metrolist.music.utils.rememberEnumPreference
 import com.metrolist.music.utils.rememberPreference
@@ -240,6 +241,35 @@ fun NavGraphBuilder.navigationBuilder(
         ),
     ) {
         ArtistItemsScreen(navController, scrollBehavior)
+    }
+
+    composable(
+        route = "video/{videoId}?title={title}&artist={artist}",
+        arguments = listOf(
+            navArgument("videoId") {
+                type = NavType.StringType
+            },
+            navArgument("title") {
+                type = NavType.StringType
+                nullable = true
+                defaultValue = null
+            },
+            navArgument("artist") {
+                type = NavType.StringType
+                nullable = true
+                defaultValue = null
+            },
+        ),
+    ) { backStackEntry ->
+        val videoId = backStackEntry.arguments?.getString("videoId") ?: return@composable
+        val title = backStackEntry.arguments?.getString("title")
+        val artist = backStackEntry.arguments?.getString("artist")
+        VideoPlayerScreen(
+            navController = navController,
+            videoId = videoId,
+            title = title,
+            artist = artist
+        )
     }
 
     composable(

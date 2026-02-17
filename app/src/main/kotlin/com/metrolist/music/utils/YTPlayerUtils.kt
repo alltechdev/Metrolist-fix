@@ -61,6 +61,19 @@ object YTPlayerUtils {
         WEB,
         WEB_CREATOR
     )
+
+    // Video-specific fallback (excludes TVHTML5 since it was already tried for adaptive 1080p+)
+    private val VIDEO_FALLBACK_CLIENTS: Array<YouTubeClient> = arrayOf(
+        ANDROID_VR_1_43_32,
+        IOS,
+        IPADOS,
+        ANDROID_VR_1_61_48,
+        ANDROID_CREATOR,
+        ANDROID_VR_NO_AUTH,
+        MOBILE,
+        WEB,
+        WEB_CREATOR
+    )
     data class PlaybackData(
         val audioConfig: PlayerResponse.PlayerConfig.AudioConfig?,
         val videoDetails: PlayerResponse.VideoDetails?,
@@ -68,6 +81,29 @@ object YTPlayerUtils {
         val format: PlayerResponse.StreamingData.Format,
         val streamUrl: String,
         val streamExpiresInSeconds: Int,
+    )
+
+    /**
+     * Data for adaptive video playback with separate video and audio streams.
+     * Used with ExoPlayer's MergingMediaSource for 1080p+ playback.
+     */
+    data class AdaptiveVideoData(
+        val videoDetails: PlayerResponse.VideoDetails?,
+        val videoUrl: String,
+        val audioUrl: String,
+        val videoFormat: PlayerResponse.StreamingData.Format,
+        val audioFormat: PlayerResponse.StreamingData.Format,
+        val expiresInSeconds: Int,
+        val availableQualities: List<VideoQualityInfo>,
+    )
+
+    data class VideoQualityInfo(
+        val height: Int,
+        val width: Int?,
+        val fps: Int?,
+        val bitrate: Int,
+        val label: String,
+        val format: PlayerResponse.StreamingData.Format,
     )
     /**
      * Custom player response intended to use for playback.
@@ -529,5 +565,421 @@ object YTPlayerUtils {
 
     fun forceRefreshForVideo(videoId: String) {
         Timber.tag(logTag).d("Force refreshing for videoId: $videoId")
+    }
+
+    /**
+     * Get adaptive video playback data with separate video and audio URLs.
+     * This enables 1080p+ playback using ExoPlayer's MergingMediaSource.
+     * Uses TVHTML5 client only - if it fails, VideoPlayerScreen falls back to progressive (720p).
+     *
+     * @param videoId The YouTube video ID
+     * @param targetHeight Target video height (e.g., 1080, 720). If null, picks highest available.
+     * @param preferMp4 Set true for downloads - MediaMuxer only supports H.264/MP4
+     * @return AdaptiveVideoData with separate video/audio URLs, or failure if not available
+     */
+    suspend fun getAdaptiveVideoData(
+        videoId: String,
+        targetHeight: Int? = null,
+        preferMp4: Boolean = false,
+    ): Result<AdaptiveVideoData> = runCatching {
+        // Use TVHTML5 for adaptive video - doesn't require n-transform
+        // If this fails, VideoPlayerScreen will fallback to progressive playback (720p max)
+        val client = TVHTML5
+
+        Timber.tag(TAG).d("=== Adaptive video START for videoId=$videoId, targetHeight=$targetHeight, preferMp4=$preferMp4 ===")
+        Timber.tag(TAG).d("Using client: ${client.clientName} (useWebPoTokens=${client.useWebPoTokens})")
+
+        val signatureTimestamp = getSignatureTimestampOrNull(videoId).timestamp
+        Timber.tag(TAG).d("Adaptive: signature timestamp=$signatureTimestamp")
+
+        // Auth and PoToken setup
+        val isLoggedIn = YouTube.cookie != null
+        val sessionId = if (isLoggedIn) YouTube.dataSyncId ?: YouTube.visitorData else YouTube.visitorData
+        Timber.tag(TAG).d("Adaptive: isLoggedIn=$isLoggedIn, sessionId=${sessionId?.take(10)}...")
+
+        val poTokenResult: PoTokenResult? = try {
+            if (sessionId == null || !client.useWebPoTokens) {
+                Timber.tag(TAG).d("Adaptive: Skipping PoToken (sessionId=$sessionId, useWebPoTokens=${client.useWebPoTokens})")
+                null
+            } else {
+                Timber.tag(TAG).d("Adaptive: Generating PoToken...")
+                poTokenGenerator.getWebClientPoToken(videoId, sessionId)
+            }
+        } catch (e: Exception) {
+            Timber.tag(TAG).e(e, "Adaptive: PoToken generation failed")
+            null
+        }
+        Timber.tag(TAG).d("Adaptive: poTokenResult=${poTokenResult?.playerRequestPoToken?.take(20)}...")
+
+        // Fetch player response
+        Timber.tag(TAG).d("Adaptive: Fetching player response with client ${client.clientName}...")
+        val playerResult = YouTube.player(
+            videoId, null, client, signatureTimestamp,
+            poToken = if (client.useWebPoTokens) poTokenResult?.playerRequestPoToken else null
+        )
+
+        if (playerResult.isFailure) {
+            Timber.tag(TAG).e(playerResult.exceptionOrNull(), "Adaptive: YouTube.player() FAILED")
+            throw playerResult.exceptionOrNull() ?: Exception("Unknown player error")
+        }
+
+        val playerResponse = playerResult.getOrThrow()
+        Timber.tag(TAG).d("Adaptive: Player response status=${playerResponse.playabilityStatus.status}")
+
+        if (playerResponse.playabilityStatus.status != "OK") {
+            throw androidx.media3.common.PlaybackException(
+                playerResponse.playabilityStatus.reason ?: "Playback not available",
+                null, androidx.media3.common.PlaybackException.ERROR_CODE_REMOTE_ERROR
+            )
+        }
+
+        val adaptiveFormats = playerResponse.streamingData?.adaptiveFormats
+            ?: throw androidx.media3.common.PlaybackException("No adaptive formats", null, androidx.media3.common.PlaybackException.ERROR_CODE_REMOTE_ERROR)
+
+        // Get video formats (video-only, sorted by height descending)
+        val videoFormats = adaptiveFormats
+            .filter { !it.isAudio && (it.height ?: 0) > 0 }
+            .sortedByDescending { it.height ?: 0 }
+
+        if (videoFormats.isEmpty()) {
+            throw androidx.media3.common.PlaybackException("No video formats available", null, androidx.media3.common.PlaybackException.ERROR_CODE_REMOTE_ERROR)
+        }
+
+        // Build available qualities list (show all for selection)
+        val availableQualities = videoFormats
+            .distinctBy { it.height }
+            .mapNotNull { format ->
+                val height = format.height ?: return@mapNotNull null
+                VideoQualityInfo(
+                    height = height,
+                    width = format.width,
+                    fps = format.fps,
+                    bitrate = format.bitrate,
+                    label = buildString {
+                        append("${height}p")
+                        format.fps?.takeIf { it > 30 }?.let { append(" ${it}fps") }
+                    },
+                    format = format
+                )
+            }
+
+        // When preferMp4 is true (for downloads), only use MP4 formats (MediaMuxer doesn't support WebM/VP9)
+        val filteredFormats = if (preferMp4) {
+            videoFormats.filter { it.mimeType.contains("mp4") }.ifEmpty { videoFormats }
+        } else {
+            videoFormats
+        }
+
+        val selectedVideoFormat = if (targetHeight != null) {
+            // Find exact match or closest lower
+            filteredFormats.find { it.height == targetHeight }
+                ?: filteredFormats.filter { (it.height ?: 0) <= targetHeight }.maxByOrNull { it.height ?: 0 }
+                ?: filteredFormats.first()
+        } else {
+            // Pick highest quality, prefer MP4 over WebM
+            val mp4Formats = filteredFormats.filter { it.mimeType.contains("mp4") }
+            (mp4Formats.ifEmpty { filteredFormats }).first()
+        }
+
+        Timber.tag(TAG).d("Selected video: ${selectedVideoFormat.height}p, itag=${selectedVideoFormat.itag}, mime=${selectedVideoFormat.mimeType}")
+
+        // Get best audio format (prefer AAC/M4A for compatibility)
+        val audioFormat = adaptiveFormats
+            .filter { it.isAudio && it.isOriginal }
+            .let { audioFormats ->
+                // Prefer MP4/AAC for compatibility
+                audioFormats.filter { it.mimeType.contains("mp4") }.maxByOrNull { it.bitrate }
+                    ?: audioFormats.maxByOrNull { it.bitrate }
+            }
+            ?: throw androidx.media3.common.PlaybackException("No audio format available", null, androidx.media3.common.PlaybackException.ERROR_CODE_REMOTE_ERROR)
+
+        Timber.tag(TAG).d("Selected audio: itag=${audioFormat.itag}, mime=${audioFormat.mimeType}, bitrate=${audioFormat.bitrate}")
+
+        // Resolve URLs
+        var videoUrl = findUrlOrNull(selectedVideoFormat, videoId, playerResponse, skipNewPipe = false)
+            ?: throw androidx.media3.common.PlaybackException("Cannot resolve video URL", null, androidx.media3.common.PlaybackException.ERROR_CODE_REMOTE_ERROR)
+        var audioUrl = findUrlOrNull(audioFormat, videoId, playerResponse, skipNewPipe = false)
+            ?: throw androidx.media3.common.PlaybackException("Cannot resolve audio URL", null, androidx.media3.common.PlaybackException.ERROR_CODE_REMOTE_ERROR)
+
+        // Apply PoToken FIRST (before n-transform for TVHTML5)
+        if (client.useWebPoTokens && poTokenResult?.streamingDataPoToken != null) {
+            val pot = poTokenResult.streamingDataPoToken
+            videoUrl = appendQueryParam(videoUrl, "pot", pot)
+            audioUrl = appendQueryParam(audioUrl, "pot", pot)
+            Timber.tag(TAG).d("Appended PoToken to URLs")
+        }
+
+        // Apply n-transform proactively
+        if (client.useWebPoTokens) {
+            try {
+                videoUrl = EjsNTransformSolver.transformNParamInUrl(videoUrl)
+                audioUrl = EjsNTransformSolver.transformNParamInUrl(audioUrl)
+                Timber.tag(TAG).d("N-transform applied to URLs")
+            } catch (e: Exception) {
+                Timber.tag(TAG).w(e, "N-transform failed: ${e.message}")
+            }
+        }
+
+        // Validate URLs for web clients (non-web clients like TVHTML5 don't need n-transform)
+        if (client.useWebPoTokens) {
+            if (!validateStatus(videoUrl)) {
+                Timber.tag(TAG).w("Video URL validation failed, trying CipherDeobfuscator n-transform...")
+                try {
+                    val transformed = CipherDeobfuscator.transformNParamInUrl(videoUrl)
+                    if (transformed != videoUrl && validateStatus(transformed)) {
+                        videoUrl = transformed
+                        Timber.tag(TAG).d("Video URL fixed with CipherDeobfuscator n-transform")
+                    }
+                } catch (e: Exception) {
+                    Timber.tag(TAG).e(e, "CipherDeobfuscator n-transform failed for video: ${e.message}")
+                }
+            }
+
+            if (!validateStatus(audioUrl)) {
+                Timber.tag(TAG).w("Audio URL validation failed, trying CipherDeobfuscator n-transform...")
+                try {
+                    val transformed = CipherDeobfuscator.transformNParamInUrl(audioUrl)
+                    if (transformed != audioUrl && validateStatus(transformed)) {
+                        audioUrl = transformed
+                        Timber.tag(TAG).d("Audio URL fixed with CipherDeobfuscator n-transform")
+                    }
+                } catch (e: Exception) {
+                    Timber.tag(TAG).e(e, "CipherDeobfuscator n-transform failed for audio: ${e.message}")
+                }
+            }
+
+            Timber.tag(TAG).d("Video URL validated: ${validateStatus(videoUrl)}")
+            Timber.tag(TAG).d("Audio URL validated: ${validateStatus(audioUrl)}")
+        } else {
+            Timber.tag(TAG).d("Skipping URL validation for non-web client: ${client.clientName}")
+        }
+
+        val expiresInSeconds = playerResponse.streamingData?.expiresInSeconds ?: (6 * 60 * 60)
+
+        Timber.tag(TAG).d("=== Adaptive video SUCCESS: ${selectedVideoFormat.height}p, expires=${expiresInSeconds}s ===")
+
+        AdaptiveVideoData(
+            videoDetails = playerResponse.videoDetails,
+            videoUrl = videoUrl,
+            audioUrl = audioUrl,
+            videoFormat = selectedVideoFormat,
+            audioFormat = audioFormat,
+            expiresInSeconds = expiresInSeconds,
+            availableQualities = availableQualities,
+        )
+    }
+
+    /**
+     * Get progressive video playback data (combined video+audio in single stream).
+     * Limited to 720p max. Falls back from adaptive playback.
+     *
+     * @param isVideoFallback Set true when falling back from adaptive - uses VIDEO_FALLBACK_CLIENTS (excludes TVHTML5)
+     */
+    suspend fun playerResponseForVideoPlayback(
+        videoId: String,
+        playlistId: String? = null,
+        connectivityManager: ConnectivityManager,
+        maxVideoBitrateKbps: Int? = null,
+        isVideoFallback: Boolean = false,
+    ): Result<PlaybackData> = runCatching {
+        // For video fallback, use VIDEO_FALLBACK_CLIENTS which excludes TVHTML5 (already tried for adaptive)
+        val fallbackClients = if (isVideoFallback) VIDEO_FALLBACK_CLIENTS else STREAM_FALLBACK_CLIENTS
+
+        Timber.tag(TAG).d("=== Video playback START for videoId=$videoId, isVideoFallback=$isVideoFallback ===")
+
+        val defaultStreamTtlSeconds = 6 * 60 * 60 // 6 hours
+        val signatureTimestamp = getSignatureTimestampOrNull(videoId).timestamp
+        val isLoggedIn = YouTube.cookie != null
+        val sessionId = if (isLoggedIn) YouTube.dataSyncId ?: YouTube.visitorData else YouTube.visitorData
+
+        var poToken: PoTokenResult? = null
+        if (MAIN_CLIENT.useWebPoTokens && sessionId != null) {
+            try {
+                poToken = poTokenGenerator.getWebClientPoToken(videoId, sessionId)
+            } catch (e: Exception) {
+                Timber.tag(TAG).e(e, "PoToken generation failed")
+            }
+        }
+
+        Timber.tag(TAG).d("Fetching main player response with client: ${MAIN_CLIENT.clientName}")
+        val mainPlayerResponse = YouTube.player(videoId, playlistId, MAIN_CLIENT, signatureTimestamp, poToken?.playerRequestPoToken).getOrThrow()
+        Timber.tag(TAG).d("Main response status: ${mainPlayerResponse.playabilityStatus.status}")
+
+        var format: PlayerResponse.StreamingData.Format? = null
+        var streamUrl: String? = null
+        var streamExpiresInSeconds: Int? = null
+        var streamPlayerResponse: PlayerResponse? = null
+        var successClient: String? = null
+
+        for (clientIndex in (-1 until fallbackClients.size)) {
+            format = null
+            streamUrl = null
+            streamExpiresInSeconds = null
+
+            val client: YouTubeClient
+            if (clientIndex == -1) {
+                client = MAIN_CLIENT
+                streamPlayerResponse = mainPlayerResponse
+                Timber.tag(TAG).d("--- Trying streams from main client: ${client.clientName} ---")
+            } else {
+                client = fallbackClients[clientIndex]
+                Timber.tag(TAG).d("--- Trying fallback client ${clientIndex + 1}/${fallbackClients.size}: ${client.clientName} ---")
+
+                if (client.loginRequired && !isLoggedIn) {
+                    Timber.tag(TAG).d("Skipping ${client.clientName} - requires login but not authenticated")
+                    continue
+                }
+
+                val clientPoToken = if (client.useWebPoTokens) poToken?.playerRequestPoToken else null
+                streamPlayerResponse = YouTube.player(videoId, playlistId, client, signatureTimestamp, clientPoToken).getOrNull()
+            }
+
+            if (streamPlayerResponse?.playabilityStatus?.status == "OK") {
+                Timber.tag(TAG).d("Status OK for ${client.clientName}")
+
+                // Find progressive video format (combined video+audio)
+                format = findVideoFormat(streamPlayerResponse, maxVideoBitrateKbps)
+                if (format == null) {
+                    Timber.tag(TAG).d("No suitable video format found for ${client.clientName}")
+                    continue
+                }
+                Timber.tag(TAG).d("Format: itag=${format.itag}, mime=${format.mimeType}, bitrate=${format.bitrate}, height=${format.height}")
+
+                streamUrl = findUrlOrNull(format, videoId, streamPlayerResponse, skipNewPipe = false)
+                if (streamUrl == null) {
+                    Timber.tag(TAG).d("No stream URL for format on ${client.clientName}")
+                    continue
+                }
+                Timber.tag(TAG).d("Stream URL (${client.clientName}): ${streamUrl.take(80)}...")
+
+                // Append streaming PoToken before validation (for web clients)
+                if (client.useWebPoTokens && poToken?.streamingDataPoToken != null) {
+                    val separator = if ("?" in streamUrl) "&" else "?"
+                    streamUrl = "${streamUrl}${separator}pot=${poToken.streamingDataPoToken}"
+                    Timber.tag(TAG).d("Appended streaming PoToken to URL")
+                }
+
+                // Apply n-transform proactively for web clients (avoids 403 round-trip)
+                if (client.useWebPoTokens) {
+                    Timber.tag(TAG).d("Attempting proactive n-transform...")
+                    try {
+                        val transformed = EjsNTransformSolver.transformNParamInUrl(streamUrl)
+                        if (transformed != streamUrl) {
+                            streamUrl = transformed
+                            Timber.tag(TAG).d("Proactive n-transform applied successfully")
+                        } else {
+                            Timber.tag(TAG).d("Proactive n-transform returned same URL (no change)")
+                        }
+                    } catch (e: Exception) {
+                        Timber.tag(TAG).w(e, "Proactive n-transform failed, will retry if needed: ${e.message}")
+                    }
+                }
+
+                streamExpiresInSeconds = streamPlayerResponse.streamingData?.expiresInSeconds ?: defaultStreamTtlSeconds
+                Timber.tag(TAG).d("Expires in: ${streamExpiresInSeconds}s")
+
+                if (streamExpiresInSeconds <= 0) {
+                    Timber.tag(TAG).d("Stream already expired, skipping")
+                    continue
+                }
+
+                if (clientIndex == fallbackClients.size - 1) {
+                    Timber.tag(TAG).d("Last fallback - skipping validation: ${client.clientName}")
+                    successClient = client.clientName
+                    break
+                }
+
+                val validationResult = validateStatus(streamUrl)
+                if (validationResult) {
+                    Timber.tag(TAG).d("Stream VALIDATED OK with ${client.clientName}")
+                    successClient = client.clientName
+                    break
+                } else {
+                    Timber.tag(TAG).d("Stream validation FAILED for ${client.clientName}")
+
+                    // For web clients: try n-parameter transform and re-validate
+                    if (client.useWebPoTokens) {
+                        var nTransformWorked = false
+
+                        // Try CipherDeobfuscator n-transform first
+                        try {
+                            val nTransformed = CipherDeobfuscator.transformNParamInUrl(streamUrl)
+                            if (nTransformed != streamUrl) {
+                                Timber.tag(TAG).d("CipherDeobfuscator n-transform applied, re-validating...")
+                                if (validateStatus(nTransformed)) {
+                                    Timber.tag(TAG).d("N-transformed URL VALIDATED OK!")
+                                    streamUrl = nTransformed
+                                    nTransformWorked = true
+                                    successClient = client.clientName
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Timber.tag(TAG).e(e, "CipherDeobfuscator n-transform error")
+                        }
+
+                        // If CipherDeobfuscator failed, try EjsNTransformSolver
+                        if (!nTransformWorked) {
+                            try {
+                                val ejsTransformed = EjsNTransformSolver.transformNParamInUrl(streamUrl)
+                                if (ejsTransformed != streamUrl) {
+                                    Timber.tag(TAG).d("EJS n-transform applied, re-validating...")
+                                    if (validateStatus(ejsTransformed)) {
+                                        Timber.tag(TAG).d("EJS n-transformed URL VALIDATED OK!")
+                                        streamUrl = ejsTransformed
+                                        nTransformWorked = true
+                                        successClient = client.clientName
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                Timber.tag(TAG).e(e, "EJS n-transform error")
+                            }
+                        }
+
+                        if (nTransformWorked) break
+                    }
+                }
+            } else {
+                Timber.tag(TAG).d("Status NOT OK for ${client.clientName}: ${streamPlayerResponse?.playabilityStatus?.status}, reason: ${streamPlayerResponse?.playabilityStatus?.reason}")
+            }
+        }
+
+        if (format == null || streamUrl == null || streamExpiresInSeconds == null) {
+            Timber.tag(TAG).e("All clients failed for video $videoId")
+            throw Exception("Could not find video stream")
+        }
+
+        Timber.tag(TAG).d("=== Video playback SUCCESS: client=${successClient ?: "unknown"}, itag=${format.itag}, expires=${streamExpiresInSeconds}s ===")
+        Log.i(TAG, "Video playback: client=${successClient ?: "unknown"}, itag=${format.itag}, videoId=$videoId")
+
+        PlaybackData(
+            mainPlayerResponse.playerConfig?.audioConfig,
+            mainPlayerResponse.videoDetails,
+            mainPlayerResponse.playbackTracking,
+            format,
+            streamUrl,
+            streamExpiresInSeconds,
+        )
+    }
+
+    private fun findVideoFormat(
+        playerResponse: PlayerResponse,
+        maxVideoBitrateKbps: Int?,
+    ): PlayerResponse.StreamingData.Format? {
+        val progressive = playerResponse.streamingData?.formats.orEmpty()
+            .filter { it.mimeType.startsWith("video") && (it.audioQuality != null || it.audioChannels != null) }
+        val progressiveMp4 = progressive.filter { it.mimeType.contains("mp4") }
+        val ordered = (progressiveMp4.ifEmpty { progressive }).sortedBy { it.bitrate }
+        val capped = maxVideoBitrateKbps?.let { cap ->
+            ordered.filter { (it.bitrate / 1000) <= cap }
+        }.orEmpty()
+        return when {
+            capped.isNotEmpty() -> capped.maxByOrNull { it.bitrate }
+            else -> ordered.maxByOrNull { it.bitrate }
+        }
+    }
+
+    private fun appendQueryParam(url: String, key: String, value: String): String {
+        val separator = if ("?" in url) "&" else "?"
+        return "$url$separator$key=$value"
     }
 }
