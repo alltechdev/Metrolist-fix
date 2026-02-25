@@ -588,14 +588,6 @@ object YTPlayerUtils {
         val isLoggedIn = currentAuthCookie != null && "SAPISID" in parseCookieString(currentAuthCookie)
         val sessionId = if (isLoggedIn) YouTube.dataSyncId ?: YouTube.visitorData else YouTube.visitorData
 
-        // Generate PoToken once for web clients
-        val poTokenResult: PoTokenResult? = try {
-            if (sessionId != null) poTokenGenerator.getWebClientPoToken(videoId, sessionId) else null
-        } catch (e: Exception) {
-            Timber.tag(TAG).e(e, "PoToken generation failed")
-            null
-        }
-
         for (client in allClients) {
             try {
                 if (client.loginRequired && !isLoggedIn) {
@@ -603,11 +595,16 @@ object YTPlayerUtils {
                     continue
                 }
 
+                // Generate PoToken for web clients
+                val poToken = if (client.useWebPoTokens && sessionId != null) {
+                    PoTokenGenerator.generateContentToken(sessionId, videoId)
+                } else null
+
                 val response = YouTube.player(
                     videoId = videoId,
                     client = client,
                     signatureTimestamp = signatureTimestamp.timestamp,
-                    poToken = if (client.useWebPoTokens) poTokenResult?.playerRequestPoToken else null
+                    poToken = poToken
                 ).getOrNull()
 
                 if (response?.playabilityStatus?.status != "OK") {
