@@ -63,14 +63,16 @@ class DownloadExportHelper @Inject constructor(
             val extension = getExtensionFromFormat(format)
             Timber.tag(TAG).d("Format: ${format?.mimeType ?: "unknown"}, Extension: $extension")
 
-            // Build folder structure: downloadFolder/Artist/Title.ext
+            // Build folder structure: downloadFolder/Artist/Album/Title.ext
             val firstArtist = song.artists.firstOrNull()?.name ?: "Unknown Artist"
             val allArtists = song.artists.joinToString(", ") { it.name }
                 .ifEmpty { "Unknown Artist" }
+            val albumName = song.album?.title ?: song.song.albumName ?: "Unknown Album"
             val title = song.song.title
             val sanitizedArtistFolder = sanitizeFilename(firstArtist)
+            val sanitizedAlbumFolder = sanitizeFilename(albumName)
             val sanitizedFilename = sanitizeFilename("$title.$extension")
-            Timber.tag(TAG).d("Artist folder: $sanitizedArtistFolder, Filename: $sanitizedFilename")
+            Timber.tag(TAG).d("Artist folder: $sanitizedArtistFolder, Album folder: $sanitizedAlbumFolder, Filename: $sanitizedFilename")
 
             Timber.tag(TAG).d("Parsing parent URI...")
             val parentUri = Uri.parse(customPathUri)
@@ -97,17 +99,29 @@ class DownloadExportHelper @Inject constructor(
             }
             Timber.tag(TAG).d("Artist folder ready: ${artistFolder.uri}")
 
-            // Check if file already exists in artist folder and delete it
-            val existingFile = artistFolder.findFile(sanitizedFilename)
+            // Create or get album subfolder inside artist folder
+            var albumFolder = artistFolder.findFile(sanitizedAlbumFolder)
+            if (albumFolder == null || !albumFolder.isDirectory) {
+                Timber.tag(TAG).d("Creating album folder: $sanitizedAlbumFolder")
+                albumFolder = artistFolder.createDirectory(sanitizedAlbumFolder)
+                if (albumFolder == null) {
+                    Timber.tag(TAG).e("Failed to create album folder: $sanitizedAlbumFolder")
+                    return@withContext null
+                }
+            }
+            Timber.tag(TAG).d("Album folder ready: ${albumFolder.uri}")
+
+            // Check if file already exists in album folder and delete it
+            val existingFile = albumFolder.findFile(sanitizedFilename)
             if (existingFile != null) {
                 Timber.tag(TAG).d("Existing file found, deleting...")
                 existingFile.delete()
             }
 
-            // Create the new file in artist folder
+            // Create the new file in album folder
             val mimeType = format?.mimeType ?: "audio/mp4"
             Timber.tag(TAG).d("Creating new file with mimeType: $mimeType")
-            val newFile = artistFolder.createFile(mimeType, sanitizedFilename) ?: run {
+            val newFile = albumFolder.createFile(mimeType, sanitizedFilename) ?: run {
                 Timber.tag(TAG).e("Failed to create file: $sanitizedFilename")
                 return@withContext null
             }
