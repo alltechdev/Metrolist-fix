@@ -282,6 +282,8 @@
     <!-- Sleep timer -->
     <string name="set_as_default">Set as default</string>
     <string name="sleep_timer_default_set">Sleep timer default set to %d min</string>
+    <string name="sleep_timer_stop_after_current_song">Stop at end of current song when timer ends</string>
+    <string name="sleep_timer_fade_out">Fade out in final minute</string>
 
     <!-- Player Settings -->
     <string name="disable_load_more_when_repeat_all">Disable load more when repeat all</string>
@@ -495,6 +497,8 @@
     <string name="unsubscribed_from_channel">Unsubscribed from channel</string>
     <string name="error_subscribe_channel">Failed to update channel subscription</string>
     <string name="view_channel">View Channel</string>
+    <string name="saved_locally">Account not detected, saving locally</string>
+    <string name="removed_locally">Account not detected, removing locally</string>
 
     <!-- Widget strings -->
     <string name="album_art">Album art</string>
