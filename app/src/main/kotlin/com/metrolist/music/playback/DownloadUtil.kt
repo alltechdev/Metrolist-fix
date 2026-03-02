@@ -338,7 +338,10 @@ constructor(
                                     timber.log.Timber.tag("DownloadUtil")
                                         .d("Attempting to delete external file for: $songId")
                                     try {
-                                        val deleted = downloadExportHelper.deleteFromCustomPath(songId)
+                                        val deleted = downloadExportHelper.deleteFromCustomPath(
+                                            songId,
+                                            if (customDownloadPathEnabled && customDownloadPathUri.isNotEmpty()) customDownloadPathUri else null
+                                        )
                                         timber.log.Timber.tag("DownloadUtil")
                                             .d("External file deletion result: $deleted for: $songId")
                                     } catch (e: Exception) {
