@@ -47,6 +47,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.TopAppBarScrollBehavior
@@ -103,6 +104,7 @@ import com.metrolist.music.models.toMediaMetadata
 import com.metrolist.music.playback.queues.ListQueue
 import com.metrolist.music.playback.queues.YouTubeQueue
 import com.metrolist.music.ui.component.AlbumGridItem
+import com.metrolist.music.ui.component.DefaultDialog
 import com.metrolist.music.ui.component.ExpandableText
 import com.metrolist.music.ui.component.HideOnScrollFAB
 import com.metrolist.music.ui.component.IconButton
@@ -163,6 +165,11 @@ fun ArtistScreen(
     val lazyListState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
     var showLocal by rememberSaveable { mutableStateOf(false) }
+
+    // Live performance dialog state
+    var showLivePlaybackDialog by remember { mutableStateOf(false) }
+    var selectedLiveItem by remember { mutableStateOf<SongItem?>(null) }
+
     val density = LocalDensity.current
 
     // Calculate the offset value outside of the offset lambda
@@ -180,6 +187,96 @@ fun ArtistScreen(
     LaunchedEffect(libraryArtist) {
         // always show local page for local artists. Show local page remote artist when offline
         showLocal = libraryArtist?.artist?.isLocal == true
+    }
+
+    // Live performance playback type dialog
+    if (showLivePlaybackDialog && selectedLiveItem != null) {
+        DefaultDialog(
+            onDismiss = {
+                showLivePlaybackDialog = false
+                selectedLiveItem = null
+            },
+            title = { Text(stringResource(R.string.live_performance)) },
+            buttons = {
+                TextButton(onClick = {
+                    showLivePlaybackDialog = false
+                    selectedLiveItem = null
+                }) {
+                    Text(stringResource(android.R.string.cancel))
+                }
+            }
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // Play as song option
+                androidx.compose.material3.Surface(
+                    onClick = {
+                        selectedLiveItem?.let { item ->
+                            playerConnection.playQueue(
+                                YouTubeQueue(
+                                    WatchEndpoint(videoId = item.id),
+                                    item.toMediaMetadata(isLive = true)
+                                ),
+                            )
+                        }
+                        showLivePlaybackDialog = false
+                        selectedLiveItem = null
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.music_note),
+                            contentDescription = null,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text(
+                            text = stringResource(R.string.play_as_song),
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                    }
+                }
+
+                // Play as video option
+                androidx.compose.material3.Surface(
+                    onClick = {
+                        selectedLiveItem?.let { item ->
+                            val artistDisplay = item.artists.joinToString(" • ") { it.name }
+                            navController.navigate(videoRoute(item.id, item.title, artistDisplay))
+                        }
+                        showLivePlaybackDialog = false
+                        selectedLiveItem = null
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.slow_motion_video),
+                            contentDescription = null,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text(
+                            text = stringResource(R.string.play_as_video),
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                    }
+                }
+            }
+        }
     }
 
     Box(
@@ -713,9 +810,10 @@ fun ArtistScreen(
                                 )
                             }
                         } else {
-                            // Detect if this is a video section
+                            // Detect if this is a video or live section
                             val isVideoSection = section.title.contains("video", ignoreCase = true) ||
                                 section.title.contains("short", ignoreCase = true)
+                            val isLiveSection = section.title.contains("live", ignoreCase = true)
 
                             item(key = "section_list_${section.title}") {
                                 LazyRow(
@@ -740,17 +838,25 @@ fun ArtistScreen(
                                                     onClick = {
                                                         when (item) {
                                                             is SongItem -> {
-                                                                if (isVideoSection) {
-                                                                    // Navigate to video player for video sections
-                                                                    val artistDisplay = item.artists.joinToString(" • ") { it.name }
-                                                                    navController.navigate(videoRoute(item.id, item.title, artistDisplay))
-                                                                } else {
-                                                                    playerConnection.playQueue(
-                                                                        YouTubeQueue(
-                                                                            WatchEndpoint(videoId = item.id),
-                                                                            item.toMediaMetadata()
-                                                                        ),
-                                                                    )
+                                                                when {
+                                                                    isLiveSection -> {
+                                                                        // Show dialog to choose between song or video playback
+                                                                        selectedLiveItem = item
+                                                                        showLivePlaybackDialog = true
+                                                                    }
+                                                                    isVideoSection -> {
+                                                                        // Navigate to video player for video sections
+                                                                        val artistDisplay = item.artists.joinToString(" • ") { it.name }
+                                                                        navController.navigate(videoRoute(item.id, item.title, artistDisplay))
+                                                                    }
+                                                                    else -> {
+                                                                        playerConnection.playQueue(
+                                                                            YouTubeQueue(
+                                                                                WatchEndpoint(videoId = item.id),
+                                                                                item.toMediaMetadata()
+                                                                            ),
+                                                                        )
+                                                                    }
                                                                 }
                                                             }
 
@@ -776,6 +882,8 @@ fun ArtistScreen(
                                                                         song = item,
                                                                         navController = navController,
                                                                         onDismiss = menuState::dismiss,
+                                                                        isVideo = isVideoSection,
+                                                                        isLive = isLiveSection,
                                                                     )
 
                                                                 is AlbumItem ->

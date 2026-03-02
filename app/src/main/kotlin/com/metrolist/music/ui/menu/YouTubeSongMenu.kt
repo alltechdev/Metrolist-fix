@@ -98,7 +98,9 @@ fun YouTubeSongMenu(
     song: SongItem,
     navController: NavController,
     onDismiss: () -> Unit,
-    onHistoryRemoved: () -> Unit = {}
+    onHistoryRemoved: () -> Unit = {},
+    isVideo: Boolean = false,
+    isLive: Boolean = false,
 ) {
     val context = LocalContext.current
     val database = LocalDatabase.current

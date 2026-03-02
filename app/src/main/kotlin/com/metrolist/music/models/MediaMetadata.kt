@@ -34,6 +34,7 @@ data class MediaMetadata(
     val suggestedBy: String? = null,
     val isEpisode: Boolean = false,
     val uploadEntityId: String? = null,
+    val isLive: Boolean = false,
 ) : Serializable {
     val isVideoSong: Boolean
         get() = musicVideoType != null && musicVideoType != MUSIC_VIDEO_TYPE_ATV
@@ -100,7 +101,7 @@ fun Song.toMediaMetadata() =
         isEpisode = song.isEpisode,
     )
 
-fun SongItem.toMediaMetadata() =
+fun SongItem.toMediaMetadata(isLive: Boolean = false) =
     MediaMetadata(
         id = id,
         title = title,
@@ -127,7 +128,8 @@ fun SongItem.toMediaMetadata() =
         libraryRemoveToken = libraryRemoveToken,
         suggestedBy = null,
         isEpisode = isEpisode,
-        uploadEntityId = uploadEntityId
+        uploadEntityId = uploadEntityId,
+        isLive = isLive
     )
 
 fun EpisodeItem.toMediaMetadata() =

@@ -112,6 +112,7 @@ fun SongMenu(
     playlistBrowseId: String? = null,
     onDismiss: () -> Unit,
     isFromCache: Boolean = false,
+    isVideo: Boolean = false,
 ) {
     val context = LocalContext.current
     val database = LocalDatabase.current

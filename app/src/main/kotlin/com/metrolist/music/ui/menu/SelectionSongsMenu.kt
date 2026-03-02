@@ -78,6 +78,7 @@ fun SelectionSongMenu(
     clearAction: () -> Unit,
     songPosition: List<PlaylistSongMap>? = emptyList(),
     isUploadedPlaylist: Boolean = false,
+    isVideo: Boolean = false,
 ) {
     val context = LocalContext.current
     val database = LocalDatabase.current
