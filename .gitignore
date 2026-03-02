@@ -103,8 +103,5 @@ core.*
 .env
 app/src/main/java/com/metrolist/music/listentogether/proto/*
 
-# FFTW third-party library build artifacts
-app/src/main/cpp/vibrafp/third_party/fftw-android/
-app/src/main/cpp/vibrafp/third_party/.build-fftw/
-.build-fftw
-app/src/main/cpp/coverart/
+# Prebuilt native libraries (downloaded during build)
+app/src/main/jniLibs/

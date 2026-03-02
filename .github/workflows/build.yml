@@ -50,6 +50,9 @@ jobs:
       - name: Setup and Generate Protobuf
         uses: ./.github/actions/setup-protobuf
 
+      - name: Setup Coverart Native Library
+        uses: ./.github/actions/setup-coverart
+
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
@@ -120,6 +123,9 @@ jobs:
 
       - name: Setup and Generate Protobuf
         uses: ./.github/actions/setup-protobuf
+
+      - name: Setup Coverart Native Library
+        uses: ./.github/actions/setup-coverart
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
