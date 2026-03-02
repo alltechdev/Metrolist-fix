@@ -9,6 +9,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.provider.DocumentsContract
 import androidx.documentfile.provider.DocumentFile
 import androidx.media3.datasource.cache.SimpleCache
 import coil3.ImageLoader
@@ -247,8 +248,9 @@ class DownloadExportHelper @Inject constructor(
 
     /**
      * Delete a song from the custom path and clear the downloadUri in the database.
+     * Also cleans up empty parent folders (Album and Artist folders).
      */
-    suspend fun deleteFromCustomPath(songId: String): Boolean = withContext(Dispatchers.IO) {
+    suspend fun deleteFromCustomPath(songId: String, customPathUri: String? = null): Boolean = withContext(Dispatchers.IO) {
         Timber.tag(TAG).d("=== Starting delete for song: $songId ===")
 
         try {
@@ -272,6 +274,12 @@ class DownloadExportHelper @Inject constructor(
             if (deleted || docFile?.exists() == false) {
                 Timber.tag(TAG).d("Clearing downloadUri in database...")
                 database.updateDownloadUri(songId, null)
+
+                // Clean up empty parent folders if we have access to the root
+                if (customPathUri != null) {
+                    cleanupEmptyParentFolders(downloadUri, customPathUri)
+                }
+
                 Timber.tag(TAG).d("=== Successfully deleted external file for: $songId ===")
                 return@withContext true
             }
@@ -281,6 +289,70 @@ class DownloadExportHelper @Inject constructor(
         } catch (e: Exception) {
             Timber.tag(TAG).e(e, "Error deleting external file for: $songId")
             false
+        }
+    }
+
+    /**
+     * Clean up empty Album and Artist folders after file deletion.
+     */
+    private fun cleanupEmptyParentFolders(deletedFileUri: String, rootUri: String) {
+        try {
+            Timber.tag(TAG).d("Cleaning up empty parent folders...")
+
+            val rootDoc = DocumentFile.fromTreeUri(context, Uri.parse(rootUri)) ?: return
+
+            // Extract the path segments from the deleted file URI
+            // URI format: content://authority/tree/treeId/document/treeId%3Apath%2Fto%2Ffile.m4a
+            val fileUri = Uri.parse(deletedFileUri)
+            val docId = DocumentsContract.getDocumentId(fileUri)
+
+            // docId format: "primary:Music/Artist/Album/song.m4a" or similar
+            val pathPart = docId.substringAfter(":", "")
+            if (pathPart.isEmpty()) return
+
+            val segments = pathPart.split("/")
+            if (segments.size < 3) return // Need at least root/artist/album/file
+
+            // Get the root path (the custom download folder path within the tree)
+            val rootDocId = DocumentsContract.getTreeDocumentId(Uri.parse(rootUri))
+            val rootPath = rootDocId.substringAfter(":", "")
+
+            // Calculate relative path from root
+            val relativePath = if (rootPath.isNotEmpty() && pathPart.startsWith(rootPath)) {
+                pathPart.removePrefix(rootPath).removePrefix("/")
+            } else {
+                pathPart
+            }
+
+            val relativeSegments = relativePath.split("/").filter { it.isNotEmpty() }
+            if (relativeSegments.size < 3) return // Need artist/album/file
+
+            val artistName = relativeSegments[0]
+            val albumName = relativeSegments[1]
+
+            Timber.tag(TAG).d("Checking folders - Artist: $artistName, Album: $albumName")
+
+            // Find and check album folder
+            val artistFolder = rootDoc.findFile(artistName)
+            if (artistFolder != null && artistFolder.isDirectory) {
+                val albumFolder = artistFolder.findFile(albumName)
+                if (albumFolder != null && albumFolder.isDirectory) {
+                    val albumFiles = albumFolder.listFiles()
+                    if (albumFiles.isEmpty()) {
+                        Timber.tag(TAG).d("Album folder is empty, deleting: $albumName")
+                        albumFolder.delete()
+                    }
+                }
+
+                // Check if artist folder is now empty
+                val artistFiles = artistFolder.listFiles()
+                if (artistFiles.isEmpty()) {
+                    Timber.tag(TAG).d("Artist folder is empty, deleting: $artistName")
+                    artistFolder.delete()
+                }
+            }
+        } catch (e: Exception) {
+            Timber.tag(TAG).w(e, "Error cleaning up empty folders (non-critical)")
         }
     }
 
