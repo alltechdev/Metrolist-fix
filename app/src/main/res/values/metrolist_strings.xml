@@ -885,4 +885,8 @@
     <string name="delete_uploaded_song_confirm">Are you sure you want to delete this uploaded song? This cannot be undone.</string>
     <string name="delete_uploaded_song_success">Uploaded song deleted</string>
     <string name="delete_uploaded_song_failed">Failed to delete uploaded song</string>
+    <string name="delete_uploaded_songs">Delete uploaded songs</string>
+    <string name="delete_uploaded_songs_confirm">Are you sure you want to delete %1$d uploaded songs? This cannot be undone.</string>
+    <string name="deleted_n_songs">Deleted %1$d songs</string>
+    <string name="deleting">Deleting…</string>
 </resources>

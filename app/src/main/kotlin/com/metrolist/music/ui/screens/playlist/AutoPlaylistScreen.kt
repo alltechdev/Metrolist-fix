@@ -767,6 +767,7 @@ fun AutoPlaylistScreen(
                                     songSelection = filteredSongs.filter { it.id in selection },
                                     onDismiss = menuState::dismiss,
                                     clearAction = onExitSelectionMode,
+                                    isUploadedPlaylist = playlistType == PlaylistType.UPLOADED,
                                 )
                             }
                         },
