@@ -143,11 +143,6 @@ object YTPlayerUtils {
             }
         }
 
-        // If we still don't have a valid response, throw
-        if (mainPlayerResponse == null) {
-            throw Exception("Failed to get player response")
-        }
-
         val audioConfig = mainPlayerResponse.playerConfig?.audioConfig
         val videoDetails = mainPlayerResponse.videoDetails
         val playbackTracking = mainPlayerResponse.playbackTracking
@@ -265,12 +260,12 @@ object YTPlayerUtils {
                 if (needsNTransform) {
                     try {
                         Timber.tag(logTag).d("Applying n-transform to stream URL for ${currentClient.clientName}")
-                        streamUrl = EjsNTransformSolver.transformNParamInUrl(streamUrl!!)
+                        streamUrl = EjsNTransformSolver.transformNParamInUrl(streamUrl)
 
                         // Append pot= parameter with streaming data poToken
                         if ((currentClient.useWebPoTokens || isPrivatelyOwnedTrack) && poToken?.streamingDataPoToken != null) {
                             Timber.tag(logTag).d("Appending pot= parameter to stream URL")
-                            val separator = if ("?" in streamUrl!!) "&" else "?"
+                            val separator = if ("?" in streamUrl) "&" else "?"
                             streamUrl = "${streamUrl}${separator}pot=${Uri.encode(poToken.streamingDataPoToken)}"
                         }
                     } catch (e: Exception) {
@@ -303,7 +298,7 @@ object YTPlayerUtils {
                     break
                 }
 
-                if (validateStatus(streamUrl!!)) {
+                if (validateStatus(streamUrl)) {
                     // working stream found
                     Timber.tag(logTag).d("Stream validated successfully with client: ${currentClient.clientName}")
                     // Log for release builds
@@ -355,7 +350,7 @@ object YTPlayerUtils {
 
         Timber.tag(logTag).d("Successfully obtained playback data with format: ${format.mimeType}, bitrate: ${format.bitrate}")
         if (isUploadedTrack) {
-            println("[PLAYBACK_DEBUG] SUCCESS: Got playback data for uploaded track - format=${format.mimeType}, streamUrl=${streamUrl?.take(100)}...")
+            println("[PLAYBACK_DEBUG] SUCCESS: Got playback data for uploaded track - format=${format.mimeType}, streamUrl=${streamUrl.take(100)}...")
         }
         PlaybackData(
             audioConfig,

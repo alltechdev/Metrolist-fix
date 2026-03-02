@@ -188,7 +188,7 @@ class DownloadExportHelper @Inject constructor(
                     if ((albumName == null || year == null) && song.song.albumId != null) {
                         Timber.tag(TAG).d("Album/year info incomplete (album=$albumName, year=$year), fetching from YouTube...")
                         try {
-                            val albumPage = com.metrolist.innertube.YouTube.album(song.song.albumId!!).getOrNull()
+                            val albumPage = com.metrolist.innertube.YouTube.album(song.song.albumId).getOrNull()
                             if (albumPage != null) {
                                 if (albumName == null) albumName = albumPage.album.title
                                 if (year == null) year = albumPage.album.year?.toString()
