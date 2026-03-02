@@ -25,6 +25,7 @@ import com.metrolist.innertube.models.YouTubeClient.Companion.WEB
 import com.metrolist.innertube.models.YouTubeClient.Companion.WEB_CREATOR
 import com.metrolist.innertube.models.YouTubeClient.Companion.WEB_REMIX
 import com.metrolist.innertube.models.response.PlayerResponse
+import com.metrolist.innertube.utils.parseCookieString
 import com.metrolist.music.constants.AudioQuality
 import com.metrolist.music.utils.cipher.CipherDeobfuscator
 import com.metrolist.music.utils.YTPlayerUtils.MAIN_CLIENT
@@ -630,7 +631,7 @@ object YTPlayerUtils {
 
                 // Generate PoToken for web clients
                 val poToken = if (client.useWebPoTokens && sessionId != null) {
-                    PoTokenGenerator.generateContentToken(sessionId, videoId)
+                    poTokenGenerator.getWebClientPoToken(videoId, sessionId)?.playerRequestPoToken
                 } else null
 
                 val response = YouTube.player(
