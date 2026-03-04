@@ -8,7 +8,9 @@ package com.metrolist.music.utils
 import com.metrolist.music.BuildConfig
 import io.ktor.client.HttpClient
 import io.ktor.client.request.get
+import io.ktor.client.request.header
 import io.ktor.client.statement.bodyAsText
+import io.ktor.http.HttpHeaders
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -127,19 +129,27 @@ object Updater {
                 if (cachedReleaseInfo != null && !forceRefresh) {
                     return@runCatching cachedReleaseInfo!!
                 }
-                
-                val response = client.get("$GITHUB_API_BASE/releases/latest")
-                    .bodyAsText()
+
+                val response = client.get("$GITHUB_API_BASE/releases/latest") {
+                    header(HttpHeaders.UserAgent, "Metrolist/${BuildConfig.VERSION_NAME}")
+                    header(HttpHeaders.Accept, "application/vnd.github+json")
+                }.bodyAsText()
                 val json = JSONObject(response)
-                
+
+                // Check for GitHub API error responses
+                if (json.has("message") && !json.has("tag_name")) {
+                    val message = json.getString("message")
+                    throw Exception(message)
+                }
+
                 val releaseInfo = ReleaseInfo(
                     tagName = json.getString("tag_name"),
-                    versionName = json.getString("name"),
-                    description = json.getString("body"),
-                    releaseDate = json.getString("published_at"),
-                    assets = parseAssets(json.getJSONArray("assets"))
+                    versionName = json.optString("name", json.getString("tag_name")),
+                    description = json.optString("body", ""),
+                    releaseDate = json.optString("published_at", ""),
+                    assets = parseAssets(json.optJSONArray("assets") ?: org.json.JSONArray())
                 )
-                
+
                 cachedReleaseInfo = releaseInfo
                 lastCheckTime = System.currentTimeMillis()
                 releaseInfo
@@ -161,8 +171,10 @@ object Updater {
                 var hasMore = true
                 
                 while (hasMore && page <= 10) { // Limit to 10 pages
-                    val response = client.get("$GITHUB_API_BASE/releases?page=$page&per_page=30")
-                        .bodyAsText()
+                    val response = client.get("$GITHUB_API_BASE/releases?page=$page&per_page=30") {
+                        header(HttpHeaders.UserAgent, "Metrolist/${BuildConfig.VERSION_NAME}")
+                        header(HttpHeaders.Accept, "application/vnd.github+json")
+                    }.bodyAsText()
                     val json = JSONArray(response)
                     
                     if (json.length() == 0) {

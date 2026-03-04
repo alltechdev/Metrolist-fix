@@ -361,6 +361,13 @@
     <string name="update_available_title">Update available</string>
     <string name="update_channel_name">App updates</string>
     <string name="update_channel_desc">Notifications about new versions</string>
+    <string name="downloading_update">Downloading update</string>
+    <string name="download_complete">Download complete</string>
+    <string name="download_failed">Download failed</string>
+    <string name="download_update">Download</string>
+    <string name="install">Install</string>
+    <string name="version_update_info">%1$s → %2$s</string>
+    <string name="download_url_not_found">Download URL not found for your device</string>
 
     <!-- Offload -->
     <string name="audio_offload">Enable offload</string>
