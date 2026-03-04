@@ -35,7 +35,6 @@ import rikka.shizuku.Shizuku
 import rikka.shizuku.ShizukuBinderWrapper
 import rikka.shizuku.SystemServiceHelper
 import java.io.File
-import java.io.FileInputStream
 import java.util.regex.Pattern
 
 sealed class InstallResult {
@@ -66,7 +65,6 @@ object AppInstaller {
         // Return all installers - permission checks happen when user selects them
         return listOf(
             InstallerRegistry.NATIVE,
-            InstallerRegistry.SESSION,
             InstallerRegistry.ROOT,
             InstallerRegistry.SHIZUKU,
             InstallerRegistry.DHIZUKU
@@ -139,7 +137,6 @@ object AppInstaller {
     ): InstallResult = withContext(Dispatchers.IO) {
         when (installerType) {
             InstallerType.NATIVE -> installNative(context, apkFile)
-            InstallerType.SESSION -> installSession(context, apkFile)
             InstallerType.ROOT -> installRoot(context, apkFile)
             InstallerType.SHIZUKU -> installShizuku(context, apkFile)
             InstallerType.DHIZUKU -> installDhizuku(context, apkFile)
@@ -165,48 +162,6 @@ object AppInstaller {
             InstallResult.RequiresUserAction
         } catch (e: Exception) {
             InstallResult.Error(e.message ?: "Failed to launch installer")
-        }
-    }
-
-    private fun installSession(context: Context, apkFile: File): InstallResult {
-        return try {
-            val packageInstaller = context.packageManager.packageInstaller
-            val params = PackageInstaller.SessionParams(
-                PackageInstaller.SessionParams.MODE_FULL_INSTALL
-            ).apply {
-                setInstallReason(PackageManager.INSTALL_REASON_USER)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
-                }
-            }
-
-            val sessionId = packageInstaller.createSession(params)
-            val session = packageInstaller.openSession(sessionId)
-
-            session.use {
-                val outputStream = it.openWrite("metrolist_update.apk", 0, apkFile.length())
-                FileInputStream(apkFile).use { input ->
-                    input.copyTo(outputStream)
-                }
-                outputStream.close()
-
-                val intent = Intent(context, InstallReceiver::class.java).apply {
-                    action = InstallReceiver.ACTION_INSTALL_STATUS
-                }
-
-                val pendingIntent = PendingIntent.getBroadcast(
-                    context,
-                    sessionId,
-                    intent,
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
-                )
-
-                it.commit(pendingIntent.intentSender)
-            }
-
-            InstallResult.RequiresUserAction
-        } catch (e: Exception) {
-            InstallResult.Error(e.message ?: "Session install failed")
         }
     }
 

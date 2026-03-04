@@ -252,7 +252,7 @@ fun UpdaterScreen(
                         ApkDownloader.clearDownloadedApk(context)
                     }
                     is InstallResult.RequiresUserAction -> {
-                        // User needs to confirm installation (for NATIVE/SESSION)
+                        // User needs to confirm installation (for NATIVE)
                         // The system installer UI will be shown
                     }
                     is InstallResult.Error -> {

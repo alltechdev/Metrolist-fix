@@ -373,8 +373,6 @@
     <string name="installer_title">Installation method</string>
     <string name="installer_native_title">Standard</string>
     <string name="installer_native_desc">Opens system package installer</string>
-    <string name="installer_session_title">Session</string>
-    <string name="installer_session_desc">PackageInstaller API, can be silent on Android 12+</string>
     <string name="installer_root_title">Root</string>
     <string name="installer_root_desc">Silent installation using root access</string>
     <string name="installer_shizuku_title">Shizuku</string>

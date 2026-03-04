@@ -10,7 +10,6 @@ import com.metrolist.music.R
 
 enum class InstallerType {
     NATIVE,
-    SESSION,
     ROOT,
     SHIZUKU,
     DHIZUKU
@@ -28,13 +27,6 @@ object InstallerRegistry {
         type = InstallerType.NATIVE,
         title = R.string.installer_native_title,
         description = R.string.installer_native_desc,
-        available = true
-    )
-
-    val SESSION = InstallerInfo(
-        type = InstallerType.SESSION,
-        title = R.string.installer_session_title,
-        description = R.string.installer_session_desc,
         available = true
     )
 
