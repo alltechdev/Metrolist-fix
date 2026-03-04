@@ -384,7 +384,7 @@
     <string name="installer_root_unavailable">Root access not available</string>
     <string name="installer_not_available">Not available on this device</string>
     <string name="installer_method">Installation method</string>
-    <string name="install_failed_format">Installation failed: %s</string>
+    <string name="shizuku_not_running">Shizuku is not running</string>
     <string name="installing">Installing…</string>
 
     <!-- Offload -->

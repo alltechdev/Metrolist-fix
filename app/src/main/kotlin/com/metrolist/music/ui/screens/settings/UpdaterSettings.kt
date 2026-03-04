@@ -42,11 +42,13 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.ProgressIndicatorDefaults
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -353,76 +355,90 @@ fun UpdaterScreen(
         if (showInstallerDialog) {
             DefaultDialog(
                 onDismiss = { showInstallerDialog = false },
+                icon = {
+                    Icon(
+                        painter = painterResource(R.drawable.download),
+                        contentDescription = null
+                    )
+                },
                 title = { Text(stringResource(R.string.installer_method)) },
                 buttons = {
                     TextButton(onClick = { showInstallerDialog = false }) {
-                        Text(stringResource(R.string.cancel))
+                        Text(stringResource(R.string.close))
                     }
                 }
             ) {
-                Column {
-                    InstallerType.entries.forEach { type ->
-                        val info = availableInstallers.find { it.type == type }!!
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable {
-                                    when (type) {
-                                        InstallerType.ROOT -> {
-                                            coroutineScope.launch {
-                                                withContext(Dispatchers.IO) {
-                                                    if (AppInstaller.hasRootAccess()) {
-                                                        onInstallerTypeChange(type.ordinal)
-                                                        showInstallerDialog = false
-                                                    } else {
-                                                        installError = context.getString(R.string.installer_root_unavailable)
-                                                    }
-                                                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Spacer(modifier = Modifier.height(8.dp))
+
+                InstallerType.entries.forEach { type ->
+                    val info = availableInstallers.find { it.type == type }!!
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable {
+                                when (type) {
+                                    InstallerType.ROOT -> {
+                                        coroutineScope.launch {
+                                            val hasRoot = withContext(Dispatchers.IO) {
+                                                AppInstaller.hasRootAccess()
                                             }
-                                        }
-                                        InstallerType.SHIZUKU -> {
-                                            if (!AppInstaller.hasShizukuOrSui(context)) {
-                                                installError = context.getString(R.string.installer_not_available)
-                                            } else if (AppInstaller.hasShizukuPermission()) {
+                                            if (hasRoot) {
                                                 onInstallerTypeChange(type.ordinal)
                                                 showInstallerDialog = false
                                             } else {
-                                                try {
-                                                    Shizuku.requestPermission(0)
-                                                } catch (e: Exception) {
-                                                    installError = context.getString(R.string.shizuku_permission_required)
-                                                }
+                                                installError = context.getString(R.string.installer_root_unavailable)
                                             }
                                         }
-                                        else -> {
+                                    }
+                                    InstallerType.SHIZUKU -> {
+                                        if (!AppInstaller.hasShizukuOrSui(context)) {
+                                            installError = context.getString(R.string.installer_not_available)
+                                        } else if (!AppInstaller.isShizukuAlive()) {
+                                            installError = context.getString(R.string.shizuku_not_running)
+                                        } else if (AppInstaller.hasShizukuPermission()) {
                                             onInstallerTypeChange(type.ordinal)
                                             showInstallerDialog = false
+                                        } else {
+                                            try {
+                                                Shizuku.requestPermission(0)
+                                            } catch (e: Exception) {
+                                                installError = context.getString(R.string.shizuku_permission_required)
+                                            }
                                         }
                                     }
+                                    else -> {
+                                        onInstallerTypeChange(type.ordinal)
+                                        showInstallerDialog = false
+                                    }
                                 }
-                                .padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            androidx.compose.material3.RadioButton(
-                                selected = installerType == type,
-                                onClick = null
-                            )
-                            Spacer(Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = stringResource(info.title),
-                                    style = MaterialTheme.typography.bodyLarge
-                                )
-                                Text(
-                                    text = stringResource(info.description),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
                             }
+                            .padding(vertical = 8.dp, horizontal = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = installerType == type,
+                            onClick = null
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = stringResource(info.title),
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = stringResource(info.description),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                     }
                 }
+
+                Spacer(modifier = Modifier.height(8.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             }
         }
 
@@ -483,7 +499,7 @@ fun UpdaterScreen(
         installError?.let {
             Spacer(Modifier.height(12.dp))
             Text(
-                text = stringResource(R.string.install_failed_format, it),
+                text = stringResource(R.string.install_failed, it),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.error,
                 modifier = Modifier.padding(horizontal = 16.dp)
@@ -622,6 +638,10 @@ private fun UpdateDownloadCard(
             ) {
                 AnimatedContent(
                     targetState = downloadState,
+                    contentKey = { state ->
+                        // Use class name as key so Downloading doesn't re-animate on progress updates
+                        state::class.simpleName
+                    },
                     label = "icon_animation"
                 ) { state ->
                     when (state) {
@@ -635,7 +655,6 @@ private fun UpdateDownloadCard(
                         }
                         is DownloadState.Downloading -> {
                             CircularProgressIndicator(
-                                progress = { animatedProgress },
                                 modifier = Modifier.size(32.dp),
                                 color = MaterialTheme.colorScheme.onPrimary,
                                 trackColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.3f),

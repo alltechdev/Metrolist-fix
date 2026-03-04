@@ -82,6 +82,14 @@ object AppInstaller {
         }
     }
 
+    fun isShizukuAlive(): Boolean {
+        return try {
+            Shizuku.pingBinder()
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     suspend fun install(
         context: Context,
         apkFile: File,
@@ -168,7 +176,7 @@ object AppInstaller {
         }
 
         return try {
-            val totalSize = apkFile.length().toInt()
+            val totalSize = apkFile.length()
 
             // Create install session via pm
             val createResult = Shell.cmd(
@@ -219,6 +227,9 @@ object AppInstaller {
      */
     @RequiresApi(Build.VERSION_CODES.O)
     private fun installShizuku(context: Context, apkFile: File): InstallResult {
+        if (!isShizukuAlive()) {
+            return InstallResult.Error(context.getString(R.string.shizuku_not_running))
+        }
         if (!hasShizukuPermission()) {
             return InstallResult.Error(context.getString(R.string.shizuku_permission_required))
         }
