@@ -20,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.metrolist.music.R
+import com.metrolist.music.ui.screens.settings.MarkdownText
 import com.metrolist.music.utils.Updater
 
 @Composable
@@ -43,11 +44,7 @@ fun ReleaseNotesCard() {
                 style = MaterialTheme.typography.titleLarge
             )
             Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = releaseInfo.description,
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.padding(vertical = 2.dp)
-            )
+            MarkdownText(releaseInfo.description)
         }
     }
     Spacer(modifier = Modifier.height(16.dp))

@@ -24,6 +24,7 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -36,6 +37,8 @@ import com.metrolist.music.utils.ReleaseInfo
 import com.metrolist.music.utils.Updater
 
 private val markdownLinkRegex = Regex("(@[a-zA-Z0-9_-]+)|(https?://[\\w-]+(\\.[\\w-]+)+[\\w.,@?^=%&:/~+#-]*[\\w@?^=%&/~+#-])")
+private val boldRegex = Regex("\\*\\*(.+?)\\*\\*")
+private val admonitionRegex = Regex("^>\\s*\\[!(WARNING|NOTE|TIP|IMPORTANT|CAUTION)]\\s*$", RegexOption.IGNORE_CASE)
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
@@ -197,10 +200,42 @@ fun MarkdownText(text: String) {
     val lines = text.split("\n")
     val uriHandler = LocalUriHandler.current
 
+    var currentAdmonition: String? = null
+    val admonitionContent = mutableListOf<String>()
+
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        lines.filter { it.isNotBlank() }.forEach { line ->
+        var i = 0
+        while (i < lines.size) {
+            val line = lines[i]
             val trimmedLine = line.trim()
 
+            // Check for GitHub admonition start
+            val admonitionMatch = admonitionRegex.find(trimmedLine)
+            if (admonitionMatch != null) {
+                currentAdmonition = admonitionMatch.groupValues[1].uppercase()
+                admonitionContent.clear()
+                i++
+                // Collect admonition content (lines starting with >)
+                while (i < lines.size && lines[i].trim().startsWith(">")) {
+                    val contentLine = lines[i].trim().removePrefix(">").trim()
+                    if (contentLine.isNotBlank()) {
+                        admonitionContent.add(contentLine)
+                    }
+                    i++
+                }
+                // Render admonition
+                AdmonitionBlock(type = currentAdmonition, content = admonitionContent.joinToString(" "))
+                currentAdmonition = null
+                continue
+            }
+
+            // Skip empty lines
+            if (trimmedLine.isBlank()) {
+                i++
+                continue
+            }
+
+            // Headers
             if (trimmedLine.startsWith("#")) {
                 val level = trimmedLine.takeWhile { it == '#' }.length
                 val headerText = trimmedLine.substring(level).trim()
@@ -224,27 +259,7 @@ fun MarkdownText(text: String) {
                     trimmedLine
                 }
 
-                val annotatedString = buildAnnotatedString {
-                    var lastIndex = 0
-                    markdownLinkRegex.findAll(contentText).forEach { result ->
-                        append(contentText.substring(lastIndex, result.range.first))
-                        
-                        val match = result.value
-                        val link = if (match.startsWith("@")) "https://github.com/${match.substring(1)}" else match
-                        
-                        pushStringAnnotation(tag = "URL", annotation = link)
-                        withStyle(style = SpanStyle(
-                            color = MaterialTheme.colorScheme.primary, 
-                            fontWeight = if (match.startsWith("@")) FontWeight.Bold else FontWeight.Normal,
-                            textDecoration = if (match.startsWith("@")) TextDecoration.None else TextDecoration.Underline
-                        )) {
-                            append(match)
-                        }
-                        pop()
-                        lastIndex = result.range.last + 1
-                    }
-                    append(contentText.substring(lastIndex))
-                }
+                val annotatedString = buildStyledText(contentText)
 
                 Column(modifier = Modifier.fillMaxWidth()) {
                     Row(modifier = Modifier.fillMaxWidth()) {
@@ -266,7 +281,7 @@ fun MarkdownText(text: String) {
                             }
                         )
                     }
-                    
+
                     if (isListItem) {
                         Spacer(modifier = Modifier.height(4.dp))
                         HorizontalDivider(
@@ -275,6 +290,120 @@ fun MarkdownText(text: String) {
                         )
                     }
                 }
+            }
+            i++
+        }
+    }
+}
+
+@Composable
+private fun buildStyledText(text: String): AnnotatedString {
+    return buildAnnotatedString {
+        var remaining = text
+        var currentIndex = 0
+
+        while (remaining.isNotEmpty()) {
+            // Find the next match (bold or link)
+            val boldMatch = boldRegex.find(remaining)
+            val linkMatch = markdownLinkRegex.find(remaining)
+
+            val nextMatch = listOfNotNull(boldMatch, linkMatch)
+                .minByOrNull { it.range.first }
+
+            if (nextMatch == null) {
+                append(remaining)
+                break
+            }
+
+            // Append text before match
+            append(remaining.substring(0, nextMatch.range.first))
+
+            when (nextMatch) {
+                boldMatch -> {
+                    withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
+                        append(boldMatch.groupValues[1])
+                    }
+                }
+                linkMatch -> {
+                    val match = linkMatch.value
+                    val link = if (match.startsWith("@")) "https://github.com/${match.substring(1)}" else match
+
+                    pushStringAnnotation(tag = "URL", annotation = link)
+                    withStyle(SpanStyle(
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = if (match.startsWith("@")) FontWeight.Bold else FontWeight.Normal,
+                        textDecoration = if (match.startsWith("@")) TextDecoration.None else TextDecoration.Underline
+                    )) {
+                        append(match)
+                    }
+                    pop()
+                }
+            }
+
+            remaining = remaining.substring(nextMatch.range.last + 1)
+        }
+    }
+}
+
+@Composable
+private fun AdmonitionBlock(type: String, content: String) {
+    val (containerColor, contentColor, icon) = when (type) {
+        "WARNING", "CAUTION" -> Triple(
+            MaterialTheme.colorScheme.errorContainer,
+            MaterialTheme.colorScheme.onErrorContainer,
+            R.drawable.error
+        )
+        "NOTE" -> Triple(
+            MaterialTheme.colorScheme.primaryContainer,
+            MaterialTheme.colorScheme.onPrimaryContainer,
+            R.drawable.info
+        )
+        "TIP" -> Triple(
+            MaterialTheme.colorScheme.tertiaryContainer,
+            MaterialTheme.colorScheme.onTertiaryContainer,
+            R.drawable.info
+        )
+        "IMPORTANT" -> Triple(
+            MaterialTheme.colorScheme.secondaryContainer,
+            MaterialTheme.colorScheme.onSecondaryContainer,
+            R.drawable.info
+        )
+        else -> Triple(
+            MaterialTheme.colorScheme.surfaceVariant,
+            MaterialTheme.colorScheme.onSurfaceVariant,
+            R.drawable.info
+        )
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = containerColor),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.Top
+        ) {
+            Icon(
+                painter = painterResource(icon),
+                contentDescription = type,
+                tint = contentColor,
+                modifier = Modifier.size(20.dp)
+            )
+            Column {
+                Text(
+                    text = type,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = contentColor
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = content,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = contentColor
+                )
             }
         }
     }

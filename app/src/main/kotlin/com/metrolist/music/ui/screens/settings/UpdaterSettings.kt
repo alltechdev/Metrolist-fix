@@ -125,11 +125,21 @@ fun UpdaterScreen(
 
     val coroutineScope = rememberCoroutineScope()
 
-    // Check for existing downloaded APK
+    // Check for existing downloaded APK and auto-check if cached update exists
     LaunchedEffect(Unit) {
         ApkDownloader.getDownloadedApk(context)?.let { file ->
             downloadedApkFile = file
             downloadState = DownloadState.Completed(file)
+        }
+
+        // Auto-populate from cached release if update is available
+        Updater.getCachedLatestRelease()?.let { cached ->
+            if (Updater.isUpdateAvailable(BuildConfig.VERSION_NAME, cached.versionName)) {
+                latestVersion = cached.versionName
+                updateAvailable = true
+                changelogContent = cached.description
+                releaseInfo = cached
+            }
         }
     }
 
@@ -377,11 +387,9 @@ fun UpdaterScreen(
                             containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
                         )
                     ) {
-                        Text(
-                            text = changelogContent ?: "",
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.padding(16.dp)
-                        )
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            MarkdownText(changelogContent ?: "")
+                        }
                     }
                 }
             }
