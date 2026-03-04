@@ -646,7 +646,7 @@ private fun UpdateDownloadCard(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
         )
     ) {
         Column(
@@ -660,7 +660,7 @@ private fun UpdateDownloadCard(
                 modifier = Modifier
                     .size(56.dp)
                     .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary),
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)),
                 contentAlignment = Alignment.Center
             ) {
                 AnimatedContent(
@@ -676,15 +676,15 @@ private fun UpdateDownloadCard(
                             Icon(
                                 painter = painterResource(R.drawable.download),
                                 contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onPrimary,
+                                tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(28.dp)
                             )
                         }
                         is DownloadState.Downloading -> {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(32.dp),
-                                color = MaterialTheme.colorScheme.onPrimary,
-                                trackColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.3f),
+                                color = MaterialTheme.colorScheme.primary,
+                                trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f),
                                 strokeWidth = 3.dp
                             )
                         }
@@ -692,7 +692,7 @@ private fun UpdateDownloadCard(
                             Icon(
                                 painter = painterResource(R.drawable.done),
                                 contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onPrimary,
+                                tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(28.dp)
                             )
                         }
@@ -700,7 +700,7 @@ private fun UpdateDownloadCard(
                             Icon(
                                 painter = painterResource(R.drawable.error),
                                 contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onPrimary,
+                                tint = MaterialTheme.colorScheme.error,
                                 modifier = Modifier.size(28.dp)
                             )
                         }
@@ -720,7 +720,7 @@ private fun UpdateDownloadCard(
                 },
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onPrimaryContainer
+                color = MaterialTheme.colorScheme.onSurface
             )
 
             Spacer(Modifier.height(4.dp))
@@ -729,7 +729,7 @@ private fun UpdateDownloadCard(
             Text(
                 text = stringResource(R.string.version_update_info, BuildConfig.VERSION_NAME, latestVersion),
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
             // Progress section for downloading state
@@ -751,7 +751,7 @@ private fun UpdateDownloadCard(
                             .height(8.dp)
                             .clip(RoundedCornerShape(4.dp)),
                         color = MaterialTheme.colorScheme.primary,
-                        trackColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.2f)
+                        trackColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f)
                     )
 
                     Spacer(Modifier.height(8.dp))
@@ -763,13 +763,13 @@ private fun UpdateDownloadCard(
                         Text(
                             text = "${ApkDownloader.formatBytes(downloadedBytes)} / ${ApkDownloader.formatBytes(totalBytes)}",
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
                             text = "${(downloadProgress * 100).toInt()}%",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                     }
                 }
