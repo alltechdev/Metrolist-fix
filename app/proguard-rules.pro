@@ -195,3 +195,6 @@
 
 # libsu for root access
 -keep class com.topjohnwu.superuser.** { *; }
+
+# Dhizuku for device owner installation
+-keep class com.rosan.dhizuku.** { *; }

@@ -12,7 +12,8 @@ enum class InstallerType {
     NATIVE,
     SESSION,
     ROOT,
-    SHIZUKU
+    SHIZUKU,
+    DHIZUKU
 }
 
 data class InstallerInfo(
@@ -48,6 +49,13 @@ object InstallerRegistry {
         type = InstallerType.SHIZUKU,
         title = R.string.installer_shizuku_title,
         description = R.string.installer_shizuku_desc,
+        available = true // Will be checked at runtime
+    )
+
+    val DHIZUKU = InstallerInfo(
+        type = InstallerType.DHIZUKU,
+        title = R.string.installer_dhizuku_title,
+        description = R.string.installer_dhizuku_desc,
         available = true // Will be checked at runtime
     )
 }

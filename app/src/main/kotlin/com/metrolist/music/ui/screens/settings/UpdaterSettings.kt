@@ -96,6 +96,8 @@ import com.metrolist.music.utils.updater.InstallerType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.rosan.dhizuku.api.Dhizuku
+import com.rosan.dhizuku.api.DhizukuRequestPermissionListener
 import rikka.shizuku.Shizuku
 import java.io.File
 
@@ -405,6 +407,31 @@ fun UpdaterScreen(
                                                 Shizuku.requestPermission(0)
                                             } catch (e: Exception) {
                                                 installError = context.getString(R.string.shizuku_permission_required)
+                                            }
+                                        }
+                                    }
+                                    InstallerType.DHIZUKU -> {
+                                        if (!AppInstaller.hasDhizuku(context)) {
+                                            installError = context.getString(R.string.installer_not_available)
+                                        } else if (AppInstaller.hasDhizukuPermission(context)) {
+                                            onInstallerTypeChange(type.ordinal)
+                                            showInstallerDialog = false
+                                        } else {
+                                            // Request Dhizuku permission
+                                            try {
+                                                Dhizuku.init(context)
+                                                Dhizuku.requestPermission(object : DhizukuRequestPermissionListener() {
+                                                    override fun onRequestPermission(grantResult: Int) {
+                                                        if (grantResult == PackageManager.PERMISSION_GRANTED) {
+                                                            onInstallerTypeChange(type.ordinal)
+                                                            showInstallerDialog = false
+                                                        } else {
+                                                            installError = context.getString(R.string.installer_dhizuku_unavailable)
+                                                        }
+                                                    }
+                                                })
+                                            } catch (e: Exception) {
+                                                installError = context.getString(R.string.installer_dhizuku_unavailable)
                                             }
                                         }
                                     }

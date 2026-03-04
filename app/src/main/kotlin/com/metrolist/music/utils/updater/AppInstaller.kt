@@ -26,6 +26,7 @@ import android.util.Log
 import androidx.annotation.RequiresApi
 import androidx.core.content.FileProvider
 import com.metrolist.music.R
+import com.rosan.dhizuku.api.Dhizuku
 import com.topjohnwu.superuser.Shell
 import dev.rikka.tools.refine.Refine
 import kotlinx.coroutines.Dispatchers
@@ -46,11 +47,20 @@ sealed class InstallResult {
 object AppInstaller {
     private const val TAG = "AppInstaller"
     private const val SHIZUKU_PACKAGE = "moe.shizuku.privileged.api"
+    private const val DHIZUKU_PACKAGE = "com.rosan.dhizuku"
     private const val PLAY_PACKAGE_NAME = "com.android.vending"
 
-    // Extension functions from LSPatch for Shizuku binder wrapping
+    // Extension functions for Shizuku binder wrapping
     private fun IBinder.wrap() = ShizukuBinderWrapper(this)
     private fun IInterface.asShizukuBinder() = this.asBinder().wrap()
+
+    // Extension functions for Dhizuku binder wrapping
+    private fun IBinder.wrapDhizuku(): IBinder = Dhizuku.binderWrapper(this)
+    private fun IInterface.asDhizukuBinder(): IBinder = Dhizuku.binderWrapper(this.asBinder())
+
+    // Cached Dhizuku binders for performance
+    private var cachedDhizukuIPackageInstaller: IPackageInstaller? = null
+    private var cachedDhizukuPackageInstaller: PackageInstaller? = null
 
     fun getAvailableInstallers(context: Context): List<InstallerInfo> {
         // Return all installers - permission checks happen when user selects them
@@ -58,7 +68,8 @@ object AppInstaller {
             InstallerRegistry.NATIVE,
             InstallerRegistry.SESSION,
             InstallerRegistry.ROOT,
-            InstallerRegistry.SHIZUKU
+            InstallerRegistry.SHIZUKU,
+            InstallerRegistry.DHIZUKU
         )
     }
 
@@ -90,6 +101,37 @@ object AppInstaller {
         }
     }
 
+    fun hasDhizuku(context: Context): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+        return try {
+            context.packageManager.getPackageInfo(DHIZUKU_PACKAGE, 0)
+            true
+        } catch (e: PackageManager.NameNotFoundException) {
+            false
+        }
+    }
+
+    fun hasDhizukuPermission(context: Context): Boolean {
+        return try {
+            Dhizuku.init(context)
+            Dhizuku.isPermissionGranted()
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private fun ensureDhizukuInit(context: Context): Boolean {
+        return try {
+            Dhizuku.init(context)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to initialize Dhizuku", e)
+            // Clear cache on init failure
+            cachedDhizukuIPackageInstaller = null
+            cachedDhizukuPackageInstaller = null
+            false
+        }
+    }
+
     suspend fun install(
         context: Context,
         apkFile: File,
@@ -100,6 +142,7 @@ object AppInstaller {
             InstallerType.SESSION -> installSession(context, apkFile)
             InstallerType.ROOT -> installRoot(context, apkFile)
             InstallerType.SHIZUKU -> installShizuku(context, apkFile)
+            InstallerType.DHIZUKU -> installDhizuku(context, apkFile)
         }
     }
 
@@ -305,6 +348,97 @@ object AppInstaller {
         } catch (e: Exception) {
             Log.e(TAG, "Shizuku install failed", e)
             InstallResult.Error(e.message ?: "Shizuku install failed")
+        }
+    }
+
+    /**
+     * Dhizuku installation - based on Aurora Store's DhizukuInstaller
+     * Uses Dhizuku API for device owner based installation
+     */
+    @RequiresApi(Build.VERSION_CODES.O)
+    private fun installDhizuku(context: Context, apkFile: File): InstallResult {
+        // Ensure Dhizuku is initialized
+        if (!ensureDhizukuInit(context)) {
+            return InstallResult.Error(context.getString(R.string.installer_dhizuku_unavailable))
+        }
+
+        if (!Dhizuku.isPermissionGranted()) {
+            return InstallResult.Error(context.getString(R.string.installer_dhizuku_unavailable))
+        }
+
+        return try {
+            // Get IPackageInstaller via Dhizuku
+            val iPackageInstaller = cachedDhizukuIPackageInstaller ?: run {
+                val iPackageManager = IPackageManager.Stub.asInterface(
+                    SystemServiceHelper.getSystemService("package").wrapDhizuku()
+                )
+                IPackageInstaller.Stub.asInterface(
+                    iPackageManager.packageInstaller.asDhizukuBinder()
+                ).also { cachedDhizukuIPackageInstaller = it }
+            }
+
+            // Get PackageInstaller instance
+            val packageInstaller = cachedDhizukuPackageInstaller ?: run {
+                val installer = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    Refine.unsafeCast<PackageInstaller>(
+                        PackageInstallerHidden(iPackageInstaller, DHIZUKU_PACKAGE, null, 0)
+                    )
+                } else {
+                    Refine.unsafeCast<PackageInstaller>(
+                        PackageInstallerHidden(iPackageInstaller, DHIZUKU_PACKAGE, 0)
+                    )
+                }
+                installer.also { cachedDhizukuPackageInstaller = it }
+            }
+
+            // Create session params with replace flag
+            val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+            var flags = Refine.unsafeCast<PackageInstallerHidden.SessionParamsHidden>(params).installFlags
+            flags = flags or PackageManagerHidden.INSTALL_REPLACE_EXISTING
+            Refine.unsafeCast<PackageInstallerHidden.SessionParamsHidden>(params).installFlags = flags
+
+            // Create and open session
+            val sessionId = packageInstaller.createSession(params)
+            val iSession = IPackageInstallerSession.Stub.asInterface(
+                iPackageInstaller.openSession(sessionId).asDhizukuBinder()
+            )
+            val session = Refine.unsafeCast<PackageInstaller.Session>(
+                PackageInstallerHidden.SessionHidden(iSession)
+            )
+
+            // Write APK to session
+            apkFile.inputStream().use { input ->
+                session.openWrite("metrolist_${System.currentTimeMillis()}", 0, -1).use { output ->
+                    input.copyTo(output)
+                    session.fsync(output)
+                }
+            }
+
+            // Create callback intent
+            val callBackIntent = Intent(context, InstallReceiver::class.java).apply {
+                action = InstallReceiver.ACTION_INSTALL_STATUS
+                setPackage(context.packageName)
+                addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
+            }
+
+            val pendingIntent = PendingIntent.getBroadcast(
+                context,
+                sessionId,
+                callBackIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+            )
+
+            // Commit session
+            session.commit(pendingIntent.intentSender)
+            session.close()
+
+            InstallResult.RequiresUserAction
+        } catch (e: Exception) {
+            Log.e(TAG, "Dhizuku install failed", e)
+            // Clear cache on failure in case binder is stale
+            cachedDhizukuIPackageInstaller = null
+            cachedDhizukuPackageInstaller = null
+            InstallResult.Error(e.message ?: context.getString(R.string.installer_dhizuku_unavailable))
         }
     }
 }

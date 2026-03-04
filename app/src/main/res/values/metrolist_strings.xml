@@ -385,6 +385,9 @@
     <string name="installer_not_available">Not available on this device</string>
     <string name="installer_method">Installation method</string>
     <string name="shizuku_not_running">Shizuku is not running</string>
+    <string name="installer_dhizuku_title">Dhizuku</string>
+    <string name="installer_dhizuku_desc">Silent installation via shared device owner</string>
+    <string name="installer_dhizuku_unavailable">Dhizuku is not available or permission not granted</string>
     <string name="installing">Installing…</string>
 
     <!-- Offload -->
