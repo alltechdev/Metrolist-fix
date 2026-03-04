@@ -569,13 +569,18 @@ fun UpdaterScreen(
                 // Changelog section
                 FilledTonalButton(
                     onClick = { showChangelog = !showChangelog },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.filledTonalButtonColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                        contentColor = MaterialTheme.colorScheme.onSurface
+                    )
                 ) {
                     Icon(
                         painter = painterResource(
                             if (showChangelog) R.drawable.expand_less else R.drawable.expand_more
                         ),
                         contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(Modifier.width(8.dp))
