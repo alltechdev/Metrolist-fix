@@ -17,6 +17,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -48,9 +49,12 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.ProgressIndicatorDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarScrollBehavior
+import android.content.pm.PackageManager
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -72,7 +76,9 @@ import com.metrolist.music.BuildConfig
 import com.metrolist.music.LocalPlayerAwareWindowInsets
 import com.metrolist.music.R
 import com.metrolist.music.constants.CheckForUpdatesKey
+import com.metrolist.music.constants.InstallerTypeKey
 import com.metrolist.music.constants.UpdateNotificationsEnabledKey
+import com.metrolist.music.ui.component.DefaultDialog
 import com.metrolist.music.ui.component.IconButton
 import com.metrolist.music.ui.component.Material3SettingsGroup
 import com.metrolist.music.ui.component.Material3SettingsItem
@@ -82,9 +88,13 @@ import com.metrolist.music.utils.DownloadState
 import com.metrolist.music.utils.ReleaseInfo
 import com.metrolist.music.utils.Updater
 import com.metrolist.music.utils.rememberPreference
+import com.metrolist.music.utils.updater.AppInstaller
+import com.metrolist.music.utils.updater.InstallResult
+import com.metrolist.music.utils.updater.InstallerType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import rikka.shizuku.Shizuku
 import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -95,8 +105,11 @@ fun UpdaterScreen(
 ) {
     val (checkForUpdates, onCheckForUpdatesChange) = rememberPreference(CheckForUpdatesKey, true)
     val (updateNotifications, onUpdateNotificationsChange) = rememberPreference(UpdateNotificationsEnabledKey, true)
+    val (installerTypeInt, onInstallerTypeChange) = rememberPreference(InstallerTypeKey, 0)
+    val installerType = InstallerType.entries.getOrElse(installerTypeInt) { InstallerType.NATIVE }
 
     val context = LocalContext.current
+    val availableInstallers = remember { AppInstaller.getAvailableInstallers(context) }
     var isChecking by remember { mutableStateOf(false) }
     var updateAvailable by remember { mutableStateOf(false) }
     var latestVersion by remember { mutableStateOf<String?>(null) }
@@ -111,6 +124,9 @@ fun UpdaterScreen(
     var downloadProgress by remember { mutableFloatStateOf(0f) }
     var downloadedBytes by remember { mutableStateOf(0L) }
     var totalBytes by remember { mutableStateOf(0L) }
+    var isInstalling by remember { mutableStateOf(false) }
+    var installError by remember { mutableStateOf<String?>(null) }
+    var showInstallerDialog by remember { mutableStateOf(false) }
 
     // Permission launcher for install packages
     val installPermissionLauncher = rememberLauncherForActivityResult(
@@ -139,6 +155,29 @@ fun UpdaterScreen(
                 updateAvailable = true
                 changelogContent = cached.description
                 releaseInfo = cached
+            }
+        }
+    }
+
+    // Shizuku permission listener
+    DisposableEffect(Unit) {
+        val listener = Shizuku.OnRequestPermissionResultListener { requestCode, grantResult ->
+            if (grantResult == PackageManager.PERMISSION_GRANTED) {
+                onInstallerTypeChange(InstallerType.SHIZUKU.ordinal)
+            } else {
+                installError = context.getString(R.string.shizuku_permission_required)
+            }
+        }
+        try {
+            Shizuku.addRequestPermissionResultListener(listener)
+        } catch (e: Exception) {
+            // Shizuku not available
+        }
+        onDispose {
+            try {
+                Shizuku.removeRequestPermissionResultListener(listener)
+            } catch (e: Exception) {
+                // Shizuku not available
             }
         }
     }
@@ -190,10 +229,32 @@ fun UpdaterScreen(
 
     fun installUpdate() {
         downloadedApkFile?.let { file ->
-            if (ApkDownloader.canInstallPackages(context)) {
-                ApkDownloader.installApk(context, file)
-            } else {
+            // For NATIVE installer, check permission first
+            if (installerType == InstallerType.NATIVE && !ApkDownloader.canInstallPackages(context)) {
                 installPermissionLauncher.launch(ApkDownloader.getInstallPermissionIntent(context))
+                return
+            }
+
+            coroutineScope.launch {
+                isInstalling = true
+                installError = null
+                val result = AppInstaller.install(context, file, installerType)
+                isInstalling = false
+                when (result) {
+                    is InstallResult.Success -> {
+                        // Installation completed successfully (for ROOT/SHIZUKU)
+                        downloadState = DownloadState.Idle
+                        downloadedApkFile = null
+                        ApkDownloader.clearDownloadedApk(context)
+                    }
+                    is InstallResult.RequiresUserAction -> {
+                        // User needs to confirm installation (for NATIVE/SESSION)
+                        // The system installer UI will be shown
+                    }
+                    is InstallResult.Error -> {
+                        installError = result.message
+                    }
+                }
             }
         }
     }
@@ -275,6 +336,98 @@ fun UpdaterScreen(
 
         Spacer(Modifier.height(16.dp))
 
+        // Installer selection - single item that opens dialog
+        val currentInstallerInfo = availableInstallers.find { it.type == installerType }
+        Material3SettingsGroup(
+            title = stringResource(R.string.installer_method),
+            items = listOf(
+                Material3SettingsItem(
+                    title = { Text(stringResource(currentInstallerInfo?.title ?: R.string.installer_native_title)) },
+                    description = { Text(stringResource(currentInstallerInfo?.description ?: R.string.installer_native_desc)) },
+                    onClick = { showInstallerDialog = true }
+                )
+            )
+        )
+
+        // Installer selection dialog
+        if (showInstallerDialog) {
+            DefaultDialog(
+                onDismiss = { showInstallerDialog = false },
+                title = { Text(stringResource(R.string.installer_method)) },
+                buttons = {
+                    TextButton(onClick = { showInstallerDialog = false }) {
+                        Text(stringResource(R.string.cancel))
+                    }
+                }
+            ) {
+                Column {
+                    InstallerType.entries.forEach { type ->
+                        val info = availableInstallers.find { it.type == type }!!
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    when (type) {
+                                        InstallerType.ROOT -> {
+                                            coroutineScope.launch {
+                                                withContext(Dispatchers.IO) {
+                                                    if (AppInstaller.hasRootAccess()) {
+                                                        onInstallerTypeChange(type.ordinal)
+                                                        showInstallerDialog = false
+                                                    } else {
+                                                        installError = context.getString(R.string.installer_root_unavailable)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        InstallerType.SHIZUKU -> {
+                                            if (!AppInstaller.hasShizukuOrSui(context)) {
+                                                installError = context.getString(R.string.installer_not_available)
+                                            } else if (AppInstaller.hasShizukuPermission()) {
+                                                onInstallerTypeChange(type.ordinal)
+                                                showInstallerDialog = false
+                                            } else {
+                                                try {
+                                                    Shizuku.requestPermission(0)
+                                                } catch (e: Exception) {
+                                                    installError = context.getString(R.string.shizuku_permission_required)
+                                                }
+                                            }
+                                        }
+                                        else -> {
+                                            onInstallerTypeChange(type.ordinal)
+                                            showInstallerDialog = false
+                                        }
+                                    }
+                                }
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            androidx.compose.material3.RadioButton(
+                                selected = installerType == type,
+                                onClick = null
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = stringResource(info.title),
+                                    style = MaterialTheme.typography.bodyLarge
+                                )
+                                Text(
+                                    text = stringResource(info.description),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
         Material3SettingsGroup(
             title = stringResource(R.string.check_for_updates_title),
             items = listOf(
@@ -327,6 +480,16 @@ fun UpdaterScreen(
             )
         }
 
+        installError?.let {
+            Spacer(Modifier.height(12.dp))
+            Text(
+                text = stringResource(R.string.install_failed_format, it),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(horizontal = 16.dp)
+            )
+        }
+
         // Update available card with download functionality
         AnimatedVisibility(
             visible = updateAvailable && latestVersion != null,
@@ -342,16 +505,19 @@ fun UpdaterScreen(
                     downloadProgress = downloadProgress,
                     downloadedBytes = downloadedBytes,
                     totalBytes = totalBytes,
+                    isInstalling = isInstalling,
                     onDownloadClick = { startDownload() },
                     onInstallClick = { installUpdate() },
                     onRetryClick = {
                         downloadState = DownloadState.Idle
+                        installError = null
                         startDownload()
                     },
                     onCancelClick = {
                         ApkDownloader.clearDownloadedApk(context)
                         downloadState = DownloadState.Idle
                         downloadedApkFile = null
+                        installError = null
                     }
                 )
 
@@ -421,6 +587,7 @@ private fun UpdateDownloadCard(
     downloadProgress: Float,
     downloadedBytes: Long,
     totalBytes: Long,
+    isInstalling: Boolean,
     onDownloadClick: () -> Unit,
     onInstallClick: () -> Unit,
     onRetryClick: () -> Unit,
@@ -619,24 +786,34 @@ private fun UpdateDownloadCard(
                         Button(
                             onClick = onInstallClick,
                             modifier = Modifier.weight(1f),
+                            enabled = !isInstalling,
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = MaterialTheme.colorScheme.primary
                             )
                         ) {
-                            Icon(
-                                painter = painterResource(R.drawable.update),
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp)
-                            )
+                            if (isInstalling) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    color = MaterialTheme.colorScheme.onPrimary,
+                                    strokeWidth = 2.dp
+                                )
+                            } else {
+                                Icon(
+                                    painter = painterResource(R.drawable.update),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                             Spacer(Modifier.width(8.dp))
                             Text(
-                                text = stringResource(R.string.install),
+                                text = if (isInstalling) stringResource(R.string.installing) else stringResource(R.string.install),
                                 maxLines = 1
                             )
                         }
                         OutlinedButton(
                             onClick = onCancelClick,
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.weight(1f),
+                            enabled = !isInstalling
                         ) {
                             Text(stringResource(R.string.cancel))
                         }

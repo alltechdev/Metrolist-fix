@@ -368,6 +368,24 @@
     <string name="install">Install</string>
     <string name="version_update_info">%1$s → %2$s</string>
     <string name="download_url_not_found">Download URL not found for your device</string>
+    <string name="install_success">Update installed successfully</string>
+    <string name="install_failed">Installation failed: %s</string>
+    <string name="installer_title">Installation method</string>
+    <string name="installer_native_title">Standard</string>
+    <string name="installer_native_desc">Opens system package installer</string>
+    <string name="installer_session_title">Session</string>
+    <string name="installer_session_desc">PackageInstaller API, can be silent on Android 12+</string>
+    <string name="installer_root_title">Root</string>
+    <string name="installer_root_desc">Silent installation using root access</string>
+    <string name="installer_shizuku_title">Shizuku</string>
+    <string name="installer_shizuku_desc">Silent installation using Shizuku</string>
+    <string name="shizuku_permission_required">Shizuku permission required</string>
+    <string name="shizuku_not_supported_version">Shizuku installer not supported on this Android version</string>
+    <string name="installer_root_unavailable">Root access not available</string>
+    <string name="installer_not_available">Not available on this device</string>
+    <string name="installer_method">Installation method</string>
+    <string name="install_failed_format">Installation failed: %s</string>
+    <string name="installing">Installing…</string>
 
     <!-- Offload -->
     <string name="audio_offload">Enable offload</string>

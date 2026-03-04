@@ -47,6 +47,7 @@ import okhttp3.Credentials
 import timber.log.Timber
 import java.net.Authenticator
 import java.net.PasswordAuthentication
+import org.lsposed.hiddenapibypass.HiddenApiBypass
 import java.net.Proxy
 import java.util.Locale
 import javax.inject.Inject
@@ -63,6 +64,11 @@ class App : Application(), SingletonImageLoader.Factory {
 
         // Install crash handler first
         CrashHandler.install(this)
+
+        // Bypass hidden API restrictions for Shizuku installer (Android 9+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            HiddenApiBypass.addHiddenApiExemptions("I", "L")
+        }
 
         // Initialize cipher deobfuscator for WEB_REMIX streaming
         CipherDeobfuscator.initialize(this)
